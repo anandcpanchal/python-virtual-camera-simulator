@@ -26,8 +26,6 @@ class VirtualCameraSimulator:
         self.K_intrinsic = create_intrinsic_matrix(fx=fx_init, fy=fy_init, cx=cx_init, cy=cy_init)
         self.aperture = tk.DoubleVar(value=5.6)
 
-        self.offset_z_spinbox = None
-        self.offset_z = tk.DoubleVar(value=0.0)
         self.camera_pos_vars = {'x': tk.DoubleVar(value=0.0), 'y': tk.DoubleVar(value=0.0),
                                 'z': tk.DoubleVar(value=100.0)}
         self.camera_rot_vars = {'rx': tk.DoubleVar(value=180.0), 'ry': tk.DoubleVar(value=0.0),
@@ -153,10 +151,6 @@ class VirtualCameraSimulator:
             self.measure_2d_y_measurement_var.set(f"Measured: {dist * self.gsdy : .4f} mm if along y-axis")
             self.measurement_points_2d = []
 
-    def _update_offset_z(self):
-        self.offset_z = self.offset_z_spinbox.get()
-        self.update_simulation()
-
     def _setup_gui(self):
         # Camera Lens Parameters Frame
         cam_param_f = ttk.LabelFrame(self.controls_frame, text="Camera Lens (K in Pixels)")
@@ -194,22 +188,34 @@ class VirtualCameraSimulator:
         # Camera Transform Frame
         cam_tf_f = ttk.LabelFrame(self.controls_frame, text="Camera Transform (Pos mm, Rot deg)")
         cam_tf_f.pack(pady=5, fill=tk.X)
+
+        # Create a frame for Position controls
+        pos_frame = ttk.Frame(cam_tf_f)
+        pos_frame.grid(row=0, column=0, padx=5, pady=5, sticky='nw')
+
         cam_pos_labs = {'x': "Pos X:", 'y': "Pos Y:", 'z': "Pos Z:"}
-        ttk.Label(cam_tf_f, text="Position (mm):").grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 2), padx=5)
+        ttk.Label(pos_frame, text="Position (mm):").grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
         for i, (k, t) in enumerate(cam_pos_labs.items()):
-            ttk.Label(cam_tf_f, text=t).grid(row=i + 1, column=0, sticky='w', padx=5, pady=1)
+            ttk.Label(pos_frame, text=t).grid(row=i + 1, column=0, sticky='w', pady=1)
             cfg = self.camera_transform_configs[k]
-            ttk.Spinbox(cam_tf_f, from_=cfg[0], to=cfg[1], increment=cfg[2], textvariable=self.camera_pos_vars[k],
-                        width=8, command=self.update_simulation).grid(row=i + 1, column=1, sticky='ew', padx=5, pady=1)
+            ttk.Spinbox(pos_frame, from_=cfg[0], to=cfg[1], increment=cfg[2], textvariable=self.camera_pos_vars[k],
+                        width=8, command=self.update_simulation).grid(row=i + 1, column=1, sticky='ew', pady=1)
+
+        # Create a frame for Orientation controls
+        rot_frame = ttk.Frame(cam_tf_f)
+        rot_frame.grid(row=0, column=1, padx=5, pady=5, sticky='nw')
+
         cam_rot_labs = {'rx': "PitchX°:", 'ry': "YawY°:", 'rz': "RollZ°:"}
-        ttk.Label(cam_tf_f, text="Orientation (deg):").grid(row=len(cam_pos_labs) + 1, column=0, columnspan=2,
-                                                            sticky='w', pady=(5, 2), padx=5)
+        ttk.Label(rot_frame, text="Orientation (deg):").grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
         for i, (k, t) in enumerate(cam_rot_labs.items()):
-            ttk.Label(cam_tf_f, text=t).grid(row=i + len(cam_pos_labs) + 2, column=0, sticky='w', padx=5, pady=1)
+            ttk.Label(rot_frame, text=t).grid(row=i + 1, column=0, sticky='w', pady=1)
             cfg = self.camera_transform_configs[k]
-            ttk.Spinbox(cam_tf_f, from_=cfg[0], to=cfg[1], increment=cfg[2], textvariable=self.camera_rot_vars[k],
-                        width=8, command=self.update_simulation).grid(row=i + len(cam_pos_labs) + 2, column=1,
-                                                                      sticky='ew', padx=5, pady=1)
+            ttk.Spinbox(rot_frame, from_=cfg[0], to=cfg[1], increment=cfg[2], textvariable=self.camera_rot_vars[k],
+                        width=8, command=self.update_simulation).grid(row=i + 1, column=1, sticky='ew', pady=1)
+
+        # Configure column weights so frames expand nicely
+        cam_tf_f.grid_columnconfigure(0, weight=1)
+        cam_tf_f.grid_columnconfigure(1, weight=1)
 
         # Object Management Frame
         self.obj_mgmt_frame = ttk.LabelFrame(self.controls_frame, text="Object (Vertices in mm)")
@@ -234,8 +240,6 @@ class VirtualCameraSimulator:
         # Measurement Tools Frame
         measure_f = ttk.LabelFrame(self.controls_frame, text="Measurement Tools")
         measure_f.pack(pady=5, fill=tk.X)
-        self.offset_spinbox = ttk.Spinbox(measure_f, from_=-100, to=100, increment=5, textvariable="Z-offset", width=6, command=self._update_offset_z)
-        self.offset_spinbox.pack(pady=(5, 0),padx=5)
 
         ttk.Button(measure_f, text="Measure 2D Dist (px)", command=self._toggle_measure_2d_mode).pack(pady=(5, 0),
                                                                                                       padx=5, fill=tk.X)
@@ -515,7 +519,7 @@ class VirtualCameraSimulator:
             obj0_Zc_mm = obj0_orig_cam_h[2] / obj0_orig_cam_h[3] if abs(obj0_orig_cam_h[3]) > 1e-9 else obj0_orig_cam_h[2]
 
             #TODO: Z offset handling
-            obj0_Zc_mm = obj0_Zc_mm - self.offset_z.get()
+            # obj0_Zc_mm = obj0_Zc_mm - self.offset_z.get()
 
             if obj0_Zc_mm > 0:
                 fx, fy = self.K_intrinsic[0, 0], self.K_intrinsic[1, 1]
