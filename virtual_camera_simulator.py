@@ -32,6 +32,7 @@ class VirtualCameraSimulator:
                                 'rz': tk.DoubleVar(value=0.0)}
         self.camera_transform_configs = {'x': (-200, 200, 1), 'y': (-200, 200, 1), 'z': (1, 1000, 1),
                                          'rx': (-180, 180, 1), 'ry': (-360, 360, 1), 'rz': (-180, 180, 1)}
+        self.object_position_offset = {'z': tk.DoubleVar(value=0.0)}
 
         self.last_mouse_x, self.last_mouse_y, self.dragging_mode, self.active_object_for_drag = 0, 0, None, None
         self.debug_mode_var = tk.BooleanVar(value=False)
@@ -151,6 +152,9 @@ class VirtualCameraSimulator:
             self.measure_2d_y_measurement_var.set(f"Measured: {dist * self.gsdy : .4f} mm if along y-axis")
             self.measurement_points_2d = []
 
+    def _update_offset(self):
+        self.update_simulation()
+
     def _setup_gui(self):
         # Camera Lens Parameters Frame
         cam_param_f = ttk.LabelFrame(self.controls_frame, text="Camera Lens (K in Pixels)")
@@ -247,6 +251,20 @@ class VirtualCameraSimulator:
         ttk.Label(measure_f, textvariable=self.measure_2d_x_measurement_var).pack(padx=5)
         ttk.Label(measure_f, textvariable=self.measure_2d_y_measurement_var).pack(padx=5)
         ttk.Label(measure_f, textvariable=self.gsd_info_var, justify=tk.LEFT).pack(pady=5, padx=5, fill=tk.X)
+
+        # Create a new frame for the Offset-Z label and spinbox
+        offset_z_frame = ttk.Frame(measure_f)
+        offset_z_frame.pack(pady=(5, 0), padx=5, fill=tk.X)  # Pack this frame within measure_f
+
+        # Now use grid within the new offset_z_frame
+        ttk.Label(offset_z_frame, text="Offset-Z").grid(row=0, column=0, sticky='w',
+                                                        padx=(0, 5))  # Removed padx on outer frame
+        ttk.Spinbox(offset_z_frame, from_=-100, to=100, increment=1, textvariable=self.object_position_offset['z'],
+                    width=6, command=self._update_offset).grid(row=0, column=1, sticky='ew')
+
+        # Configure the column weights for the offset_z_frame to make spinbox expand
+        offset_z_frame.grid_columnconfigure(0, weight=0)  # Label doesn't need to expand
+        offset_z_frame.grid_columnconfigure(1, weight=1)  # Spinbox will take available space
 
         # Debug Frame
         debug_f = ttk.LabelFrame(self.controls_frame, text="Debugging")
@@ -519,13 +537,13 @@ class VirtualCameraSimulator:
             obj0_Zc_mm = obj0_orig_cam_h[2] / obj0_orig_cam_h[3] if abs(obj0_orig_cam_h[3]) > 1e-9 else obj0_orig_cam_h[2]
 
             #TODO: Z offset handling
-            # obj0_Zc_mm = obj0_Zc_mm - self.offset_z.get()
+            obj0_Zc_mm = obj0_Zc_mm - self.object_position_offset['z'].get()
 
             if obj0_Zc_mm > 0:
                 fx, fy = self.K_intrinsic[0, 0], self.K_intrinsic[1, 1]
                 self.gsdx = obj0_Zc_mm / fx if abs(fx) > 1e-6 else float('inf')
                 self.gsdy = obj0_Zc_mm / fy if abs(fy) > 1e-6 else float('inf')
-                self.gsd_info_var.set(f"GSD@Obj Zc={obj0_Zc_mm:.1f}mm:\nX:{self.gsdx:.4f} Y:{self.gsdy:.4f} mm/px")
+                self.gsd_info_var.set(f"GSD@Obj Zc={obj0_Zc_mm:.1f}mm \nX:{self.gsdx:.4f} mm/px \nY:{self.gsdy:.4f} mm/px")
             else:
                 self.gsd_info_var.set(f"GSD: Obj Zc={obj0_Zc_mm:.1f}mm (Invalid Zc)")
         else:
