@@ -8,7 +8,7 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk # Add NavigationToolbar2Tk
 import datetime
 
 # --- Main Simulator Class ---
@@ -354,8 +354,7 @@ class VirtualCameraSimulator:
 
         # Display Areas
         self.image_frame.pack(side=tk.TOP, padx=0, pady=(0, 5), expand=True, fill="both")  # No X padx for image_frame
-        self.image_canvas = tk.Canvas(self.image_frame, width=self.canvas_width, height=self.canvas_height,
-                                      bg="lightgrey")
+        self.image_canvas = tk.Canvas(self.image_frame, width=self.canvas_width, height=self.canvas_height,bg="lightgrey")
         self.image_canvas.pack(expand=True, fill="both")
 
         save_button = ttk.Button(self.image_frame, text="Save 2D Projection Image", command=self._save_2d_projection_as_image)
@@ -375,7 +374,18 @@ class VirtualCameraSimulator:
         self.canvas_3d_agg = FigureCanvasTkAgg(self.fig_3d, master=self.view_3d_frame)
         self.canvas_3d_agg.draw()
         self.canvas_3d_agg.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        self.fig_3d.tight_layout()  # Prevent labels overlapping
+        # --- Add the Matplotlib Navigation Toolbar for the 3D View ---
+        toolbar_frame_3d = ttk.Frame(self.view_3d_frame)  # Create a frame for the toolbar
+        toolbar_frame_3d.pack(side=tk.BOTTOM, fill=tk.X, expand=False)  # Place it below the canvas
+
+        toolbar = NavigationToolbar2Tk(self.canvas_3d_agg, toolbar_frame_3d)
+        toolbar.update()  # Important to initialize the toolbar
+
+        try:
+            self.fig_3d.tight_layout() # Prevent labels overlapping
+        except Exception as e:
+            self.log_debug(f"Note: fig_3d.tight_layout() failed: {e}")
+
 
     def _on_debug_toggle(self):
         self.log_debug(f"Debug mode: {self.debug_mode_var.get()}")
