@@ -573,7 +573,7 @@ class VirtualCameraSimulator:
 
     def update_simulation(self, event=None):
         self.log_debug("--- SIMULATION UPDATE START ---")
-        self.draw_context.rectangle([0, 0, self.canvas_width, self.canvas_height], fill="lightgrey")
+        self.draw_context.rectangle([0, 0, self.canvas_width, self.canvas_height], fill="white")
 
         cam_p = np.array([self.camera_pos_vars[k].get() for k in ['x', 'y', 'z']])
         cam_r_deg = np.array([self.camera_rot_vars[k].get() for k in ['rx', 'ry', 'rz']])
