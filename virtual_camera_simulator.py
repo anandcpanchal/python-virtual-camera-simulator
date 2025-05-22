@@ -14,27 +14,66 @@ import datetime
 # --- Main Simulator Class ---
 class VirtualCameraSimulator:
     # __init__ and other methods will go here
-    # (The __init__ from previous response, slightly adapted for clarity)
     def __init__(self, root):
         self.root = root
         self.root.title("Virtual Camera Simulator")
+        # Configure root window's grid to allow the main scrollable area to expand
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
 
+        # --- Create a Canvas and Scrollbars for the ENTIRE window content ---
+        # This outer_container holds the root_canvas and its scrollbars
+        outer_scrollable_container = ttk.Frame(self.root)
+        outer_scrollable_container.grid(row=0, column=0, sticky='nsew')
+        outer_scrollable_container.grid_rowconfigure(0, weight=1)
+        outer_scrollable_container.grid_columnconfigure(0, weight=1)
+
+        self.root_canvas = tk.Canvas(outer_scrollable_container, borderwidth=0, highlightthickness=0)
+
+        self.v_scrollbar = ttk.Scrollbar(outer_scrollable_container, orient="vertical", command=self.root_canvas.yview)
+        self.h_scrollbar = ttk.Scrollbar(outer_scrollable_container, orient="horizontal",
+                                         command=self.root_canvas.xview)
+
+        self.root_canvas.configure(yscrollcommand=self.v_scrollbar.set, xscrollcommand=self.h_scrollbar.set)
+
+        # Grid layout for canvas and scrollbars within outer_scrollable_container
+        self.root_canvas.grid(row=0, column=0, sticky='nsew')
+        self.v_scrollbar.grid(row=0, column=1, sticky='ns')
+        self.h_scrollbar.grid(row=1, column=0, sticky='ew')  # Horizontal scrollbar at the bottom
+
+        # This frame will hold ALL application content and be placed inside root_canvas
+        self.app_content_frame = ttk.Frame(self.root_canvas, padding=(5, 5))  # Add some padding
+
+        # Place app_content_frame onto the root_canvas
+        self.root_canvas.create_window((0, 0), window=self.app_content_frame, anchor="nw", tags="app_content_frame_tag")
+
+        # Update scrollregion when app_content_frame's size changes
+        self.app_content_frame.bind("<Configure>", self._on_app_content_frame_configure)
+
+        # Configure grid weights for app_content_frame children (controls and main display)
+        self.app_content_frame.grid_columnconfigure(0, weight=0)  # Controls column, initial width determined by content
+        self.app_content_frame.grid_columnconfigure(1, weight=1)  # Display column, will expand
+        self.app_content_frame.grid_rowconfigure(0, weight=1)  # The single row expands vertically
+
+        # --- Initialize your variables (objects, K, camera, etc.) ---
         self.objects_3d = []
-        self._create_default_object()
+        # Note: _create_default_object will be called later or needs self.obj_transform_vars
 
-        self.canvas_width, self.canvas_height = 640, 320
-        fx_init, fy_init = self.canvas_width * 1.2, self.canvas_height * 1.2  # Slightly narrower FoV
+        self.canvas_width, self.canvas_height = 1280, 720
+        fx_init, fy_init = self.canvas_width * 1.2, self.canvas_height * 1.2
         cx_init, cy_init = self.canvas_width / 2.0, self.canvas_height / 2.0
         self.K_intrinsic = create_intrinsic_matrix(fx=fx_init, fy=fy_init, cx=cx_init, cy=cy_init)
         self.aperture = tk.DoubleVar(value=5.6)
 
         self.camera_pos_vars = {'x': tk.DoubleVar(value=0.0), 'y': tk.DoubleVar(value=0.0),
                                 'z': tk.DoubleVar(value=100.0)}
-        self.camera_rot_vars = {'rx': tk.DoubleVar(value=180.0), 'ry': tk.DoubleVar(value=0.0),
+        self.camera_rot_vars = {'rx': tk.DoubleVar(value=0.0), 'ry': tk.DoubleVar(value=0.0),
+                                # Set pitch to 0 for straight initial view
                                 'rz': tk.DoubleVar(value=0.0)}
         self.camera_transform_configs = {'x': (-200, 200, 1), 'y': (-200, 200, 1), 'z': (1, 1000, 1),
                                          'rx': (-180, 180, 1), 'ry': (-360, 360, 1), 'rz': (-180, 180, 1)}
-        self.object_position_offset = {'z': tk.DoubleVar(value=0.0)}
+
+        self.object_position_offset = {'z': tk.DoubleVar(value=0.0)} # This was in your __init__, keep if used
 
         self.last_mouse_x, self.last_mouse_y, self.dragging_mode, self.active_object_for_drag = 0, 0, None, None
         self.debug_mode_var = tk.BooleanVar(value=False)
@@ -45,44 +84,133 @@ class VirtualCameraSimulator:
                                    'rz': tk.DoubleVar(value=0.0),
                                    'sx': tk.DoubleVar(value=1.0), 'sy': tk.DoubleVar(value=1.0),
                                    'sz': tk.DoubleVar(value=1.0)}
-
         self.transform_configs = {'tx': (-100, 100, 1), 'ty': (-100, 100, 1), 'tz': (-100, 100, 1),
                                   'rx': (-180, 180, 5), 'ry': (-360, 360, 5), 'rz': (-180, 180, 5), 'sx': (0.1, 5, 0.1),
                                   'sy': (0.1, 5, 0.1), 'sz': (0.1, 5, 0.1)}
 
-        self.controls_frame = ttk.LabelFrame(self.root, text="Controls (Units: mm, deg, px)")
-        self.controls_frame.pack(side=tk.LEFT, padx=10, pady=10, fill=tk.Y, anchor='n')
-        self.main_display_area = ttk.Frame(self.root)
-        self.main_display_area.pack(side=tk.RIGHT, padx=10, pady=10, expand=True, fill="both")
+        # --- Reparent your main frames to be children of self.app_content_frame ---
+        self.controls_frame = ttk.LabelFrame(self.app_content_frame, text="Controls (Units: mm, deg, px)")
+        self.controls_frame.grid(row=0, column=0, sticky='ns', padx=(0, 5),
+                                 pady=0)  # Fill vertically, fixed width for controls
 
+        self.main_display_area = ttk.Frame(self.app_content_frame)  # This will hold 2D and 3D views
+        self.main_display_area.grid(row=0, column=1, sticky='nsew', padx=(5, 0), pady=0)
+        # Configure main_display_area to allow its children (2D and 3D frames) to expand
+        self.main_display_area.grid_rowconfigure(0, weight=1)  # image_frame row
+        self.main_display_area.grid_rowconfigure(1, weight=1)  # view_3d_frame row
+        self.main_display_area.grid_columnconfigure(0, weight=1)  # Allow content to use full width
+
+        # --- Initialize children of self.main_display_area ---
         self.image_frame = ttk.LabelFrame(self.main_display_area, text="2D Projection (pixels)")
-        self.image_canvas = None
+        self.image_canvas = None  # Will be created in _setup_gui
         self.pil_image = Image.new("RGB", (self.canvas_width, self.canvas_height), "lightgrey")
         self.draw_context = ImageDraw.Draw(self.pil_image)
 
         self.view_3d_frame = ttk.LabelFrame(self.main_display_area, text="3D Scene View (mm)")
-        self.fig_3d = Figure(figsize=(6, 5), dpi=100)
+        self.fig_3d = Figure(figsize=(5, 4), dpi=100)  # Adjusted figsize for potentially smaller area
         self.ax_3d = self.fig_3d.add_subplot(111, projection='3d')
         self.canvas_3d_agg = None
         self.current_V_view_for_3d_plot = np.eye(4)
 
+        # UI Variables for Measurement Info
         self.obj_dims_var = tk.StringVar(value="Obj Dims (mm): N/A")
         self.pixel_coord_var = tk.StringVar(value="Cursor (px): (N/A)")
         self.measure_2d_status_var = tk.StringVar(value="2D Measure: OFF")
-        self.measure_2d_x_measurement_var = tk.StringVar(value="X Measure: OFF")
-        self.measure_2d_y_measurement_var = tk.StringVar(value="Y Measure: OFF")
+        self.measure_2d_x_measurement_var = tk.StringVar(value="X Measure: OFF") # Kept from your code
+        self.measure_2d_y_measurement_var = tk.StringVar(value="Y Measure: OFF") # Kept from your code
         self.gsd_info_var = tk.StringVar(value="GSD (mm/px): N/A")
+
+        # 2D Measurement State
         self.measuring_2d_mode = False
         self.measurement_points_2d = []
         self.measurement_line_id_2d = None
         self.measurement_text_id_2d = None
 
+        # GSD related (from your __init__)
         self.obj0_Zc_mm = None
         self.gsdx = None
         self.gsdy = None
+        # These seem like they should be calculated in update_simulation rather than stored as members long-term
+
+        self._create_default_object()  # Now safe to call as obj_transform_vars exists
+
+        # Bind mousewheel for the root canvas for overall application scrolling
+        # This allows scrolling the main content area if it overflows the window
+        # Careful binding is needed if Matplotlib's default scroll-zoom is active on 3D canvas
+        self.root_canvas.bind("<MouseWheel>", self._on_root_mousewheel)
+        self.root_canvas.bind("<Button-4>", self._on_root_mousewheel)  # Linux scroll up
+        self.root_canvas.bind("<Button-5>", self._on_root_mousewheel)  # Linux scroll down
+        # Also bind to app_content_frame to help capture events when mouse is over it
+        self._bind_mousewheel_recursively(self.app_content_frame, self.root_canvas)
+
         self._setup_gui()
         if self.objects_3d: self._display_object_dimensions(self.objects_3d[0])
         self.update_simulation()
+
+    # You will also need the _on_app_content_frame_configure method:
+    def _on_app_content_frame_configure(self, event=None):
+        """Updates the scrollregion of the root_canvas to encompass app_content_frame."""
+        self.root_canvas.configure(scrollregion=self.root_canvas.bbox("all"))
+        # Optional: Make the app_content_frame at least as wide as the canvas if canvas is wider
+        # self.root_canvas.itemconfig("app_content_frame_tag", width=self.root_canvas.winfo_width())
+
+    # And the _on_root_mousewheel method (modified to be more careful about event target):
+    def _on_root_mousewheel(self, event):
+        """Handles mouse wheel scrolling for the root_canvas (main application content)."""
+
+        # Determine the actual widget under the mouse for more precise control
+        # If event.widget is part of the Matplotlib canvas or controls_canvas, let their own handlers work.
+        # This is a simplified check; robustly determining if a child scrollable should take precedence is complex.
+
+        # Check if the event originated from a widget that might have its own scrolling
+        # (like the 3D canvas or the inner controls canvas if it were scrollable)
+        # For now, we assume if Matplotlib is not handling it, root_canvas can.
+        # This might need refinement if Matplotlib's toolbar enables its own scroll zoom.
+
+        current_widget = event.widget
+        while current_widget is not None:
+            if current_widget == self.canvas_3d_agg.get_tk_widget() if self.canvas_3d_agg else False:
+                # self.log_debug("Root scroll: Event over 3D canvas, allowing Matplotlib to handle.")
+                return  # Let Matplotlib's default scroll (if any) take over
+            if current_widget == self.controls_frame:  # If controls panel had its own scroll
+                # self.log_debug("Root scroll: Event over controls canvas, allowing its scroll.")
+                # return # Let controls_canvas scroll itself if it's independently scrollable
+                pass  # For now, let root scroll even if over controls canvas, as controls are not independently scrollable here.
+            if current_widget == self.root:  # Top-level
+                break
+            current_widget = current_widget.master
+
+        # If we reached here, scroll the root_canvas
+        if event.num == 4:  # Linux scroll up
+            self.root_canvas.yview_scroll(-1, "units")
+        elif event.num == 5:  # Linux scroll down
+            self.root_canvas.yview_scroll(1, "units")
+        elif hasattr(event, 'delta') and event.delta != 0:  # Windows/macOS
+            self.root_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        # return "break" # Usually good to prevent further propagation if handled
+
+    # And _bind_mousewheel_recursively if you choose to use it more widely for the root canvas
+    # (The version binding to a *specific target_canvas* is needed)
+    def _bind_mousewheel_recursively(self, widget, target_canvas):
+        def _scroll_target(event):
+            # Similar logic to _on_root_mousewheel to decide IF to scroll target_canvas
+            # This needs to be context-aware. For now, just scroll the target.
+            if event.num == 4:
+                target_canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                target_canvas.yview_scroll(1, "units")
+            elif hasattr(event, 'delta') and event.delta != 0:
+                target_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            return "break"
+
+        widget.bind('<MouseWheel>', lambda e, tc=target_canvas: _scroll_target(e), add='+')
+        widget.bind('<Button-4>', lambda e, tc=target_canvas: _scroll_target(e), add='+')
+        widget.bind('<Button-5>', lambda e, tc=target_canvas: _scroll_target(e), add='+')
+        for child in widget.winfo_children():
+            # Be careful not to re-bind to already scrollable canvases like Matplotlib's
+            if child != (self.canvas_3d_agg.get_tk_widget() if self.canvas_3d_agg else None) and \
+                    child != self.controls_frame:  # If controls_canvas had its own scrollbar
+                self._bind_mousewheel_recursively(child, target_canvas)
 
     def _create_default_object(self):
         v = [[-10, -10, -10], [10, -10, -10], [10, 10, -10], [-10, 10, -10], [-10, -10, 10], [10, -10, 10],
