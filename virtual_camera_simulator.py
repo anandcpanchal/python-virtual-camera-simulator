@@ -9,6 +9,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
+import datetime
+
 # --- Main Simulator Class ---
 class VirtualCameraSimulator:
     # __init__ and other methods will go here
@@ -155,6 +157,83 @@ class VirtualCameraSimulator:
     def _update_offset(self):
         self.update_simulation()
 
+    # Inside VirtualCameraSimulator class:
+    def _save_2d_projection_as_image(self):
+        if self.pil_image is None:
+            self.log_debug("No 2D image available to save.")
+            # Optionally show a tk.messagebox.showinfo or .showerror
+            tk.messagebox.showwarning("Save Error", "No 2D projection image is available to save.")
+            return
+
+        suggested_filename = self._generate_descriptive_filename()
+
+        filepath = filedialog.asksaveasfilename(
+            initialfile=suggested_filename,
+            defaultextension=".png",
+            filetypes=[
+                ("PNG files", "*.png"),
+                ("JPEG files", "*.jpg;*.jpeg"),
+                ("Bitmap files", "*.bmp"),
+                ("GIF files", "*.gif"),
+                ("All files", "*.*")
+            ],
+            title="Save 2D Projection As..."
+        )
+
+        if filepath:  # If the user didn't cancel
+            try:
+                self.pil_image.save(filepath)
+                self.log_debug(f"2D projection saved to: {filepath}")
+                tk.messagebox.showinfo("Save Successful", f"Image saved to:\n{filepath}")
+            except Exception as e:
+                self.log_debug(f"Error saving 2D projection: {e}")
+                tk.messagebox.showerror("Save Error", f"Could not save image:\n{e}")
+        else:
+            self.log_debug("Save 2D projection cancelled by user.")
+
+    def _generate_descriptive_filename(self):
+        base = "projection"
+
+        # Camera Intrinsic
+        ci_fx = self.K_intrinsic[0][0]
+        ci_fy = self.K_intrinsic[1][1]
+        ci_s = self.K_intrinsic[0][1]
+        ci_cx = self.K_intrinsic[0][2]
+        ci_cy = self.K_intrinsic[1][2]
+        cam_intrinsic_str = f"K_{ci_fx:.0f}-{ci_s:.0f}-{ci_cx:.0f}_{ci_fy:.0f}-{ci_cy:.0f}"
+
+        # Camera Position
+        cp_x = self.camera_pos_vars['x'].get()
+        cp_y = self.camera_pos_vars['y'].get()
+        cp_z = self.camera_pos_vars['z'].get()
+        cam_pos_str = f"CPx{cp_x:.0f}y{cp_y:.0f}z{cp_z:.0f}"
+
+        # Camera Rotation
+        cr_p = self.camera_rot_vars['rx'].get()  # Pitch
+        cr_y = self.camera_rot_vars['ry'].get()  # Yaw
+        cr_r = self.camera_rot_vars['rz'].get()  # Roll
+        cam_rot_str = f"CRp{cr_p:.0f}y{cr_y:.0f}r{cr_r:.0f}"
+
+        obj_str = ""
+        if self.objects_3d:
+            obj = self.objects_3d[0]  # Using the first object's properties
+            op_x, op_y, op_z = obj.translation[0], obj.translation[1], obj.translation[2]
+            obj_pos_str = f"OPx{op_x:.0f}y{op_y:.0f}z{op_z:.0f}"
+
+            or_p, or_y, or_r = obj.rotation_euler_deg[0], obj.rotation_euler_deg[1], obj.rotation_euler_deg[2]
+            obj_rot_str = f"ORp{or_p:.0f}y{or_y:.0f}r{or_r:.0f}"
+            obj_str = f"__{obj_pos_str}_{obj_rot_str}"  # Two underscores to separate clearly
+
+        # Timestamp for uniqueness
+        timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+        # Replace any characters that might be problematic in filenames (though less common with this format)
+        # For simplicity, this example assumes the rounded floats don't produce issues.
+        # Consider replacing '.' with 'p' if needed, e.g. "10p5" for 10.5
+
+        filename = f"{base}_{cam_intrinsic_str}_{cam_pos_str}_{cam_rot_str}{obj_str}_{timestamp}.png"
+        return filename
+
     def _setup_gui(self):
         # Camera Lens Parameters Frame
         cam_param_f = ttk.LabelFrame(self.controls_frame, text="Camera Lens (K in Pixels)")
@@ -277,7 +356,11 @@ class VirtualCameraSimulator:
         self.image_canvas = tk.Canvas(self.image_frame, width=self.canvas_width, height=self.canvas_height,
                                       bg="lightgrey")
         self.image_canvas.pack(expand=True, fill="both")
+
+        save_button = ttk.Button(self.image_frame, text="Save 2D Projection Image", command=self._save_2d_projection_as_image)
+        save_button.pack(pady=5, padx=5, fill=tk.X)
         ttk.Label(self.image_frame, textvariable=self.pixel_coord_var).pack(side=tk.BOTTOM, fill=tk.X, padx=2, pady=2)
+
         self.image_canvas.bind("<Motion>", self._on_mouse_hover_2d_canvas)
         self.image_canvas.bind("<Leave>", self._on_mouse_leave_2d_canvas)
         self.image_canvas.bind("<ButtonPress-1>", self._on_mouse_press)
