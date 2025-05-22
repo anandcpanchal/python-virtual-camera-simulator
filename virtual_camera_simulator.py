@@ -59,7 +59,7 @@ class VirtualCameraSimulator:
         self.objects_3d = []
         # Note: _create_default_object will be called later or needs self.obj_transform_vars
 
-        self.canvas_width, self.canvas_height = 1280, 720
+        self.canvas_width, self.canvas_height = 640, 360
         fx_init, fy_init = self.canvas_width * 1.2, self.canvas_height * 1.2
         cx_init, cy_init = self.canvas_width / 2.0, self.canvas_height / 2.0
         self.K_intrinsic = create_intrinsic_matrix(fx=fx_init, fy=fy_init, cx=cx_init, cy=cy_init)
@@ -67,11 +67,11 @@ class VirtualCameraSimulator:
 
         self.camera_pos_vars = {'x': tk.DoubleVar(value=0.0), 'y': tk.DoubleVar(value=0.0),
                                 'z': tk.DoubleVar(value=100.0)}
-        self.camera_rot_vars = {'rx': tk.DoubleVar(value=0.0), 'ry': tk.DoubleVar(value=0.0),
+        self.camera_rot_vars = {'rx': tk.DoubleVar(value=180.0), 'ry': tk.DoubleVar(value=0.0),
                                 # Set pitch to 0 for straight initial view
                                 'rz': tk.DoubleVar(value=0.0)}
         self.camera_transform_configs = {'x': (-200, 200, 1), 'y': (-200, 200, 1), 'z': (1, 1000, 1),
-                                         'rx': (-180, 180, 1), 'ry': (-360, 360, 1), 'rz': (-180, 180, 1)}
+                                         'rx': (-360, 360, 1), 'ry': (-360, 360, 1), 'rz': (-360, 360, 1)}
 
         self.object_position_offset = {'z': tk.DoubleVar(value=0.0)} # This was in your __init__, keep if used
 
