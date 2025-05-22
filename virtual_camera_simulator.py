@@ -17,6 +17,7 @@ class VirtualCameraSimulator:
     def __init__(self, root):
         self.root = root
         self.root.title("Virtual Camera Simulator")
+        self.root.state('zoomed')
         # Configure root window's grid to allow the main scrollable area to expand
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
@@ -134,7 +135,7 @@ class VirtualCameraSimulator:
 
         # For 2D Projection Grid
         self.show_2d_grid_var = tk.BooleanVar(value=False)  # Default to grid being off
-        self.grid_spacing_pixels = 1  # Default spacing for the grid
+        self.grid_spacing_pixels = tk.IntVar(value=5)
         self._create_default_object()  # Now safe to call as obj_transform_vars exists
 
         # Bind mousewheel for the root canvas for overall application scrolling
@@ -488,16 +489,28 @@ class VirtualCameraSimulator:
         self.image_canvas = tk.Canvas(self.image_frame, width=self.canvas_width, height=self.canvas_height,bg="lightgrey")
         self.image_canvas.pack(expand=True, fill="both")
 
+        ttk.Label(self.image_frame, textvariable=self.pixel_coord_var).pack(side=tk.BOTTOM, fill=tk.X, padx=2, pady=2)
         save_button = ttk.Button(self.image_frame, text="Save 2D Projection Image", command=self._save_2d_projection_as_image)
         save_button.pack(pady=5, padx=5, fill=tk.X)
         grid_checkbutton = ttk.Checkbutton(
             self.image_frame,
-            text=f"Show Pixel Grid (every {self.grid_spacing_pixels}px)",
+            text=f"Show Pixel Grid (every {self.grid_spacing_pixels.get()}px)",
             variable=self.show_2d_grid_var,
             command=self.update_simulation  # Redraw simulation when toggled
         )
-        grid_checkbutton.pack(pady=5, padx=5, anchor='w')
-        ttk.Label(self.image_frame, textvariable=self.pixel_coord_var).pack(side=tk.BOTTOM, fill=tk.X, padx=2, pady=2)
+        grid_checkbutton.pack(side=tk.LEFT, padx=(0, 5), pady=2)
+        ttk.Label(self.image_frame, text="Grid Spacing (px):").pack(side=tk.LEFT, padx=(0, 5))
+
+        grid_spacing_spinbox = ttk.Spinbox(
+            self.image_frame,
+            from_=1,  # Minimum practical spacing to avoid performance issues/visual clutter
+            to=self.canvas_width // 2,  # Max sensible spacing (e.g., half canvas width)
+            increment=1,  # Allow fine adjustment, or use 5 for larger steps
+            textvariable=self.grid_spacing_pixels,
+            width=6,  # Adjust width as needed
+            command=self.update_simulation  # Redraw on change
+        )
+        grid_spacing_spinbox.pack(side=tk.LEFT, padx=(0, 5), pady=2, expand=False, fill=tk.X)
 
         self.image_canvas.bind("<Motion>", self._on_mouse_hover_2d_canvas)
         self.image_canvas.bind("<Leave>", self._on_mouse_leave_2d_canvas)
@@ -915,24 +928,32 @@ class VirtualCameraSimulator:
         self.log_debug("--- SIMULATION UPDATE START ---")
         self.draw_context.rectangle([0, 0, self.canvas_width, self.canvas_height], fill="white")
 
-        # --- Optional: Draw Pixel Grid if Enabled ---
+        # --- Draw Pixel Grid if Enabled ---
         if self.show_2d_grid_var.get():
-            grid_color = "#C0C0C0"  # A slightly darker grey for the grid lines
-            # Use self.grid_spacing_pixels for spacing
+            grid_color = "#D0D0D0"  # Light grey for grid lines
+            try:
+                current_grid_spacing = self.grid_spacing_pixels.get()
+                # Ensure spacing is a positive, sensible value
+                if current_grid_spacing < 1:
+                    current_grid_spacing = 1  # Minimum spacing to avoid excessive lines
+                    self.grid_spacing_pixels.set(current_grid_spacing)  # Correct the var if too low
+                if current_grid_spacing > self.canvas_width and current_grid_spacing > self.canvas_height:
+                    # If spacing is larger than canvas, no lines would be drawn by range, which is fine.
+                    pass
 
-            # Draw vertical lines
-            for x in range(self.grid_spacing_pixels, self.canvas_width, self.grid_spacing_pixels):
-                self.draw_context.line([(x, 0), (x, self.canvas_height)], fill=grid_color, width=1)
+            except tk.TclError:  # Handles case where spinbox might have invalid text during entry
+                current_grid_spacing = 1  # Fallback default
+                self.grid_spacing_pixels.set(current_grid_spacing)
 
-            # Draw horizontal lines
-            for y in range(self.grid_spacing_pixels, self.canvas_height, self.grid_spacing_pixels):
-                self.draw_context.line([(0, y), (self.canvas_width, y)], fill=grid_color, width=1)
+            self.log_debug(f"Drawing 2D grid with spacing: {current_grid_spacing} px")
+            if current_grid_spacing > 0:  # Proceed only if spacing is valid
+                # Draw vertical lines
+                for x_coord in range(current_grid_spacing, self.canvas_width, current_grid_spacing):
+                    self.draw_context.line([(x_coord, 0), (x_coord, self.canvas_height)], fill=grid_color, width=1)
 
-            # Optional: Draw a center crosshair
-            center_x, center_y = self.canvas_width // 2, self.canvas_height // 2
-            cross_hair_color = "#B0B0B0"
-            self.draw_context.line([(center_x, 0), (center_x, self.canvas_height)], fill=cross_hair_color, width=1) # PIL has no dash for line
-            self.draw_context.line([(0, center_y), (self.canvas_width, center_y)], fill=cross_hair_color, width=1)
+                # Draw horizontal lines
+                for y_coord in range(current_grid_spacing, self.canvas_height, current_grid_spacing):
+                    self.draw_context.line([(0, y_coord), (self.canvas_width, y_coord)], fill=grid_color, width=1)
 
         cam_p = np.array([self.camera_pos_vars[k].get() for k in ['x', 'y', 'z']])
         cam_r_deg = np.array([self.camera_rot_vars[k].get() for k in ['rx', 'ry', 'rz']])
