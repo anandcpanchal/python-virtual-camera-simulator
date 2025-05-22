@@ -788,7 +788,7 @@ class VirtualCameraSimulator:
 
             # == 3d. Camera Target Point (visualization - as before) ==
             # ... (camera target scatter plot logic) ...
-            target_dist_mm_sim = 50.0  # Match with update_simulation's V_view calculation
+            target_dist_mm_sim = self.obj0_Zc_mm
             cam_target_sim_w = cam_p_w + cam_look_dir_world * target_dist_mm_sim
             self.ax_3d.scatter(cam_target_sim_w[0], cam_target_sim_w[1], cam_target_sim_w[2],
                                c='cyan', marker='X', s=50, label='Sim Target Pt', depthshade=False, edgecolors='blue')
