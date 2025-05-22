@@ -132,6 +132,9 @@ class VirtualCameraSimulator:
         self.gsdy = None
         # These seem like they should be calculated in update_simulation rather than stored as members long-term
 
+        # For 2D Projection Grid
+        self.show_2d_grid_var = tk.BooleanVar(value=False)  # Default to grid being off
+        self.grid_spacing_pixels = 1  # Default spacing for the grid
         self._create_default_object()  # Now safe to call as obj_transform_vars exists
 
         # Bind mousewheel for the root canvas for overall application scrolling
@@ -487,6 +490,13 @@ class VirtualCameraSimulator:
 
         save_button = ttk.Button(self.image_frame, text="Save 2D Projection Image", command=self._save_2d_projection_as_image)
         save_button.pack(pady=5, padx=5, fill=tk.X)
+        grid_checkbutton = ttk.Checkbutton(
+            self.image_frame,
+            text=f"Show Pixel Grid (every {self.grid_spacing_pixels}px)",
+            variable=self.show_2d_grid_var,
+            command=self.update_simulation  # Redraw simulation when toggled
+        )
+        grid_checkbutton.pack(pady=5, padx=5, anchor='w')
         ttk.Label(self.image_frame, textvariable=self.pixel_coord_var).pack(side=tk.BOTTOM, fill=tk.X, padx=2, pady=2)
 
         self.image_canvas.bind("<Motion>", self._on_mouse_hover_2d_canvas)
@@ -904,6 +914,25 @@ class VirtualCameraSimulator:
     def update_simulation(self, event=None):
         self.log_debug("--- SIMULATION UPDATE START ---")
         self.draw_context.rectangle([0, 0, self.canvas_width, self.canvas_height], fill="white")
+
+        # --- Optional: Draw Pixel Grid if Enabled ---
+        if self.show_2d_grid_var.get():
+            grid_color = "#C0C0C0"  # A slightly darker grey for the grid lines
+            # Use self.grid_spacing_pixels for spacing
+
+            # Draw vertical lines
+            for x in range(self.grid_spacing_pixels, self.canvas_width, self.grid_spacing_pixels):
+                self.draw_context.line([(x, 0), (x, self.canvas_height)], fill=grid_color, width=1)
+
+            # Draw horizontal lines
+            for y in range(self.grid_spacing_pixels, self.canvas_height, self.grid_spacing_pixels):
+                self.draw_context.line([(0, y), (self.canvas_width, y)], fill=grid_color, width=1)
+
+            # Optional: Draw a center crosshair
+            center_x, center_y = self.canvas_width // 2, self.canvas_height // 2
+            cross_hair_color = "#B0B0B0"
+            self.draw_context.line([(center_x, 0), (center_x, self.canvas_height)], fill=cross_hair_color, width=1) # PIL has no dash for line
+            self.draw_context.line([(0, center_y), (self.canvas_width, center_y)], fill=cross_hair_color, width=1)
 
         cam_p = np.array([self.camera_pos_vars[k].get() for k in ['x', 'y', 'z']])
         cam_r_deg = np.array([self.camera_rot_vars[k].get() for k in ['rx', 'ry', 'rz']])
