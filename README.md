@@ -2,6 +2,8 @@
 
 Virtual Camera Simulator written in python for better understanding of the camera
 
+![img.png](img.png)
+
 ## Prerequisites
 
 Before you begin, ensure you have the following installed:
