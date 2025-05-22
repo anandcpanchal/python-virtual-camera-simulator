@@ -8,6 +8,8 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk # Add NavigationToolbar2Tk
+import datetime
 
 # --- Main Simulator Class ---
 class VirtualCameraSimulator:
@@ -75,6 +77,7 @@ class VirtualCameraSimulator:
         self.measurement_line_id_2d = None
         self.measurement_text_id_2d = None
 
+        self.obj0_Zc_mm = None
         self.gsdx = None
         self.gsdy = None
         self._setup_gui()
@@ -154,6 +157,83 @@ class VirtualCameraSimulator:
 
     def _update_offset(self):
         self.update_simulation()
+
+    # Inside VirtualCameraSimulator class:
+    def _save_2d_projection_as_image(self):
+        if self.pil_image is None:
+            self.log_debug("No 2D image available to save.")
+            # Optionally show a tk.messagebox.showinfo or .showerror
+            tk.messagebox.showwarning("Save Error", "No 2D projection image is available to save.")
+            return
+
+        suggested_filename = self._generate_descriptive_filename()
+
+        filepath = filedialog.asksaveasfilename(
+            initialfile=suggested_filename,
+            defaultextension=".png",
+            filetypes=[
+                ("PNG files", "*.png"),
+                ("JPEG files", "*.jpg;*.jpeg"),
+                ("Bitmap files", "*.bmp"),
+                ("GIF files", "*.gif"),
+                ("All files", "*.*")
+            ],
+            title="Save 2D Projection As..."
+        )
+
+        if filepath:  # If the user didn't cancel
+            try:
+                self.pil_image.save(filepath)
+                self.log_debug(f"2D projection saved to: {filepath}")
+                tk.messagebox.showinfo("Save Successful", f"Image saved to:\n{filepath}")
+            except Exception as e:
+                self.log_debug(f"Error saving 2D projection: {e}")
+                tk.messagebox.showerror("Save Error", f"Could not save image:\n{e}")
+        else:
+            self.log_debug("Save 2D projection cancelled by user.")
+
+    def _generate_descriptive_filename(self):
+        base = "projection"
+
+        # Camera Intrinsic
+        ci_fx = self.K_intrinsic[0][0]
+        ci_fy = self.K_intrinsic[1][1]
+        ci_s = self.K_intrinsic[0][1]
+        ci_cx = self.K_intrinsic[0][2]
+        ci_cy = self.K_intrinsic[1][2]
+        cam_intrinsic_str = f"K_{ci_fx:.0f}-{ci_s:.0f}-{ci_cx:.0f}_{ci_fy:.0f}-{ci_cy:.0f}"
+
+        # Camera Position
+        cp_x = self.camera_pos_vars['x'].get()
+        cp_y = self.camera_pos_vars['y'].get()
+        cp_z = self.camera_pos_vars['z'].get()
+        cam_pos_str = f"CPx{cp_x:.0f}y{cp_y:.0f}z{cp_z:.0f}"
+
+        # Camera Rotation
+        cr_p = self.camera_rot_vars['rx'].get()  # Pitch
+        cr_y = self.camera_rot_vars['ry'].get()  # Yaw
+        cr_r = self.camera_rot_vars['rz'].get()  # Roll
+        cam_rot_str = f"CRp{cr_p:.0f}y{cr_y:.0f}r{cr_r:.0f}"
+
+        obj_str = ""
+        if self.objects_3d:
+            obj = self.objects_3d[0]  # Using the first object's properties
+            op_x, op_y, op_z = obj.translation[0], obj.translation[1], obj.translation[2]
+            obj_pos_str = f"OPx{op_x:.0f}y{op_y:.0f}z{op_z:.0f}"
+
+            or_p, or_y, or_r = obj.rotation_euler_deg[0], obj.rotation_euler_deg[1], obj.rotation_euler_deg[2]
+            obj_rot_str = f"ORp{or_p:.0f}y{or_y:.0f}r{or_r:.0f}"
+            obj_str = f"__{obj_pos_str}_{obj_rot_str}"  # Two underscores to separate clearly
+
+        # Timestamp for uniqueness
+        timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+        # Replace any characters that might be problematic in filenames (though less common with this format)
+        # For simplicity, this example assumes the rounded floats don't produce issues.
+        # Consider replacing '.' with 'p' if needed, e.g. "10p5" for 10.5
+
+        filename = f"{base}_{cam_intrinsic_str}_{cam_pos_str}_{cam_rot_str}{obj_str}_{timestamp}.png"
+        return filename
 
     def _setup_gui(self):
         # Camera Lens Parameters Frame
@@ -274,10 +354,13 @@ class VirtualCameraSimulator:
 
         # Display Areas
         self.image_frame.pack(side=tk.TOP, padx=0, pady=(0, 5), expand=True, fill="both")  # No X padx for image_frame
-        self.image_canvas = tk.Canvas(self.image_frame, width=self.canvas_width, height=self.canvas_height,
-                                      bg="lightgrey")
+        self.image_canvas = tk.Canvas(self.image_frame, width=self.canvas_width, height=self.canvas_height,bg="lightgrey")
         self.image_canvas.pack(expand=True, fill="both")
+
+        save_button = ttk.Button(self.image_frame, text="Save 2D Projection Image", command=self._save_2d_projection_as_image)
+        save_button.pack(pady=5, padx=5, fill=tk.X)
         ttk.Label(self.image_frame, textvariable=self.pixel_coord_var).pack(side=tk.BOTTOM, fill=tk.X, padx=2, pady=2)
+
         self.image_canvas.bind("<Motion>", self._on_mouse_hover_2d_canvas)
         self.image_canvas.bind("<Leave>", self._on_mouse_leave_2d_canvas)
         self.image_canvas.bind("<ButtonPress-1>", self._on_mouse_press)
@@ -291,7 +374,18 @@ class VirtualCameraSimulator:
         self.canvas_3d_agg = FigureCanvasTkAgg(self.fig_3d, master=self.view_3d_frame)
         self.canvas_3d_agg.draw()
         self.canvas_3d_agg.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        self.fig_3d.tight_layout()  # Prevent labels overlapping
+        # --- Add the Matplotlib Navigation Toolbar for the 3D View ---
+        toolbar_frame_3d = ttk.Frame(self.view_3d_frame)  # Create a frame for the toolbar
+        toolbar_frame_3d.pack(side=tk.BOTTOM, fill=tk.X, expand=False)  # Place it below the canvas
+
+        toolbar = NavigationToolbar2Tk(self.canvas_3d_agg, toolbar_frame_3d)
+        toolbar.update()  # Important to initialize the toolbar
+
+        try:
+            self.fig_3d.tight_layout() # Prevent labels overlapping
+        except Exception as e:
+            self.log_debug(f"Note: fig_3d.tight_layout() failed: {e}")
+
 
     def _on_debug_toggle(self):
         self.log_debug(f"Debug mode: {self.debug_mode_var.get()}")
@@ -351,63 +445,224 @@ class VirtualCameraSimulator:
 
     def _update_3d_view(self):
         self.ax_3d.clear()
-        all_pts = []
-        for obj in self.objects_3d:
-            m = obj.get_model_matrix()
-            world_v_h = (m @ obj.vertices_local.T).T
-            world_v = world_v_h[:, :3] / np.maximum(world_v_h[:, 3, np.newaxis], 1e-9)
-            all_pts.extend(world_v.tolist())
+        all_plot_points = []
+
+        # --- 1. Draw 3D Objects (as before) ---
+        for obj_idx, obj in enumerate(self.objects_3d):
+            model_matrix = obj.get_model_matrix()
+            world_vertices_h = (model_matrix @ obj.vertices_local.T).T
+            world_vertices = world_vertices_h[:, :3] / np.maximum(world_vertices_h[:, 3, np.newaxis], 1e-9)
+            if world_vertices.size > 0: all_plot_points.extend(world_vertices.tolist())
+
             if obj.faces:
-                fvl, fcl = [], []
-                for i, fi in enumerate(obj.faces):
-                    if not all(0 <= idx < len(world_v) for idx in fi) or len(fi) < 3: continue
-                    fv3d = [world_v[idx] for idx in fi]
-                    fvl.append(fv3d)
-                    rgb_int = obj.get_face_color_rgb_int(i)
-                    fcl.append(tuple(c / 255. for c in rgb_int))
-                if fvl: self.ax_3d.add_collection3d(Poly3DCollection(fvl, fc=fcl, lw=0.3, ec='dimgray', alpha=1.0))
-            else:  # Wireframe fallback for 3D view
-                for e in obj.edges:
-                    p1, p2 = world_v[e[0]], world_v[e[1]]
-                    self.ax_3d.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]],
-                                    color=rgb_tuple_to_hex(obj.default_rgb_int), lw=1)
+                # ... (Poly3DCollection logic for object faces as in your last working version) ...
+                face_vertex_list_for_collection = []
+                face_colors_for_collection = []
+                for i, face_indices in enumerate(obj.faces):
+                    if not all(0 <= idx < len(world_vertices) for idx in face_indices) or len(face_indices) < 3:
+                        continue
+                    face_verts_3d = [world_vertices[idx] for idx in face_indices]
+                    face_vertex_list_for_collection.append(face_verts_3d)
+                    base_rgb_int = obj.get_face_color_rgb_int(i)
+                    matplotlib_color = tuple(c / 255.0 for c in base_rgb_int)
+                    face_colors_for_collection.append(matplotlib_color)
+                if face_vertex_list_for_collection:
+                    poly_collection = Poly3DCollection(face_vertex_list_for_collection,
+                                                       facecolors=face_colors_for_collection,
+                                                       linewidths=0.3, edgecolors='dimgray', alpha=1.0)
+                    self.ax_3d.add_collection3d(poly_collection)
 
+            elif obj.edges:  # Fallback wireframe for 3D view if no faces
+                for edge in obj.edges:
+                    p1_idx, p2_idx = edge
+                    if 0 <= p1_idx < len(world_vertices) and 0 <= p2_idx < len(world_vertices):
+                        pt1, pt2 = world_vertices[p1_idx], world_vertices[p2_idx]
+                        self.ax_3d.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], [pt1[2], pt2[2]],
+                                        color=rgb_tuple_to_hex(obj.default_rgb_int), lw=1.0)
+
+        # --- 2. Camera Representation & Debug Visuals ---
         cam_p_w = np.array([self.camera_pos_vars[k].get() for k in ['x', 'y', 'z']])
-        if not np.any(np.isnan(cam_p_w)): all_pts.append(cam_p_w.tolist())
+        if not np.any(np.isnan(cam_p_w)): all_plot_points.append(cam_p_w.tolist())
+
         R_wc = self.current_V_view_for_3d_plot[:3, :3]
-        cam_look_dir_w = R_wc.T[:, 2]
+        R_cw = R_wc.T
 
-        scl_ref_pt = np.mean([p for p in all_pts if not np.any(np.isnan(p))], axis=0) if all_pts else cam_p_w
+        cam_x_axis_world = R_cw[:, 0]
+        cam_y_axis_world = R_cw[:, 1]
+        cam_look_dir_world = R_cw[:, 2]
+
+        scl_ref_pt = np.mean([p for p in all_plot_points if p is not None and not np.any(np.isnan(p)) and len(p) == 3],
+                             axis=0) if len(all_plot_points) > 1 else cam_p_w
         dist_scl = np.linalg.norm(cam_p_w - scl_ref_pt)
-        if dist_scl < 1e-1: dist_scl = np.linalg.norm(cam_p_w)  # If close to scene center, use dist from origin
-        if dist_scl < 1e-1: dist_scl = 50.0  # Further fallback
+        if dist_scl < 1e-1: dist_scl = np.linalg.norm(cam_p_w)
+        if dist_scl < 1e-1: dist_scl = 50.0
 
-        cone_h = max(1.0, dist_scl * 0.12)
+        cone_h = max(10.0, dist_scl * 0.10)
         cone_r = cone_h * 0.4
-        cV, cE = create_cone_wireframe(cam_p_w, cam_look_dir_w, cone_h, cone_r, 8)
-        if cV.size > 0: all_pts.extend(cV.tolist())
-        for e in cE:
-            p1, p2 = cV[e[0]], cV[e[1]]
-            self.ax_3d.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], color='darkorchid', lw=1)
+        cone_v, cone_e = create_cone_wireframe(cam_p_w, cam_look_dir_world, cone_h, cone_r, 8)
+        if cone_v.size > 0: all_plot_points.extend(cone_v.tolist())
+        for edge in cone_e:
+            p1, p2 = cone_v[edge[0]], cone_v[edge[1]]
+            self.ax_3d.plot([p1[0], p2[0]], [p1[1], p2[1]],[p1[2], p2[2]],color='darkorchid', lw=1)
 
-        valid_pts = [p for p in all_pts if not np.any(np.isnan(p))]
-        if valid_pts:
-            pts_arr = np.array(valid_pts)
+        # --- 3. Debug Mode Visuals ---
+        if self.debug_mode_var.get():
+            self.log_debug("Updating 3D debug visuals (axes, frustum)...")
+
+            # == 3a. World Coordinate Axes == (as before)
+            world_axis_length = max(5.0, dist_scl * 0.25)
+            self.ax_3d.quiver(0, 0, 0, world_axis_length, 0, 0, color='#FF6666', arrow_length_ratio=0.1,
+                              label='World X')
+            self.ax_3d.text(world_axis_length * 1.1, 0, 0, "Xw", color='#FF6666')
+            self.ax_3d.quiver(0, 0, 0, 0, world_axis_length, 0, color='#66FF66', arrow_length_ratio=0.1,
+                              label='World Y')
+            self.ax_3d.text(0, world_axis_length * 1.1, 0, "Yw", color='#66FF66')
+            self.ax_3d.quiver(0, 0, 0, 0, 0, world_axis_length, color='#6666FF', arrow_length_ratio=0.1,
+                              label='World Z')
+            self.ax_3d.text(0, 0, world_axis_length * 1.1, "Zw", color='#6666FF')
+            if not self.ax_3d.get_legend():
+                self.ax_3d.legend(fontsize='x-small', loc='upper left', bbox_to_anchor=(0.0, 0.90))
+
+            # == 3b. Camera Axes Lines and Labels ==
+            cam_axis_vis_len = cone_h * 3  # Make them slightly longer than cone height for visibility
+            # Camera Xc (red)
+            self.ax_3d.quiver(cam_p_w[0], cam_p_w[1], cam_p_w[2], cam_x_axis_world[0], cam_x_axis_world[1],
+                              cam_x_axis_world[2], length=cam_axis_vis_len, color='red', arrow_length_ratio=0.15,
+                              linewidth=1.5)
+            self.ax_3d.text(cam_p_w[0] + cam_x_axis_world[0] * cam_axis_vis_len * 1.1,
+                            cam_p_w[1] + cam_x_axis_world[1] * cam_axis_vis_len * 1.1,
+                            cam_p_w[2] + cam_x_axis_world[2] * cam_axis_vis_len * 1.1, "Xc", color='red',
+                            fontsize='small')
+            # Camera Yc (green)
+            self.ax_3d.quiver(cam_p_w[0], cam_p_w[1], cam_p_w[2], cam_y_axis_world[0], cam_y_axis_world[1],
+                              cam_y_axis_world[2], length=cam_axis_vis_len, color='green', arrow_length_ratio=0.15,
+                              linewidth=1.5)
+            self.ax_3d.text(cam_p_w[0] + cam_y_axis_world[0] * cam_axis_vis_len * 1.1,
+                            cam_p_w[1] + cam_y_axis_world[1] * cam_axis_vis_len * 1.1,
+                            cam_p_w[2] + cam_y_axis_world[2] * cam_axis_vis_len * 1.1, "Yc", color='green',
+                            fontsize='small')
+            # Camera Zc - look direction (blue)
+            self.ax_3d.quiver(cam_p_w[0], cam_p_w[1], cam_p_w[2], cam_look_dir_world[0], cam_look_dir_world[1],
+                              cam_look_dir_world[2], length=cam_axis_vis_len, color='blue', arrow_length_ratio=0.15,
+                              linewidth=1.5)
+            self.ax_3d.text(cam_p_w[0] + cam_look_dir_world[0] * cam_axis_vis_len * 1.1,
+                            cam_p_w[1] + cam_look_dir_world[1] * cam_axis_vis_len * 1.1,
+                            cam_p_w[2] + cam_look_dir_world[2] * cam_axis_vis_len * 1.1, "Zc", color='blue',
+                            fontsize='small')
+
+            # == 3c. Camera FOV (Frustum) Visualization ==
+            fx, fy = self.K_intrinsic[0, 0], self.K_intrinsic[1, 1]
+            cx, cy = self.K_intrinsic[0, 2], self.K_intrinsic[1, 2]
+            img_W, img_H = self.canvas_width, self.canvas_height
+
+            near_vis_dist_abs = max(0.1, cone_h * 0.3)  # Near plane for frustum visualization
+
+            pts_cam_at_z1 = [
+                np.array([(0 - cx) / fx, (0 - cy) / fy, 1.0]), np.array([(img_W - cx) / fx, (0 - cy) / fy, 1.0]),
+                np.array([(img_W - cx) / fx, (img_H - cy) / fy, 1.0]), np.array([(0 - cx) / fx, (img_H - cy) / fy, 1.0])
+            ]
+            near_corners_cam = [p_at_z1 * near_vis_dist_abs for p_at_z1 in pts_cam_at_z1]
+            near_corners_world = [cam_p_w + R_cw @ p_cam for p_cam in near_corners_cam]
+            all_plot_points.extend(c.tolist() for c in near_corners_world)
+
+            frustum_color = '#888888'
+            frustum_style = '--'
+            frustum_lw = 0.8
+            for i in range(4):  # Draw Near Plane
+                p1, p2 = near_corners_world[i], near_corners_world[(i + 1) % 4]
+                self.ax_3d.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], color=frustum_color,
+                                linestyle=frustum_style, lw=frustum_lw)
+
+            # --- Far Plane Calculation: Project to Y=0 or use fixed distance ---
+            far_corners_world = []
+            camera_on_Y0_plane_threshold = 0.1  # How close to Y=0 is considered "on the plane"
+
+            if abs(cam_p_w[1]) < camera_on_Y0_plane_threshold:
+                self.log_debug("Camera is near/on Y=0 plane. Visualizing frustum far plane at fixed distance.")
+                far_vis_dist_abs = max(near_vis_dist_abs * 2.0, dist_scl * 0.5)  # Fallback far distance
+                far_corners_cam = [p_at_z1 * far_vis_dist_abs for p_at_z1 in pts_cam_at_z1]
+                far_corners_world = [cam_p_w + R_cw @ p_cam for p_cam in far_corners_cam]
+                # Draw this fixed far plane
+                for i in range(4):
+                    p1, p2 = far_corners_world[i], far_corners_world[(i + 1) % 4]
+                    self.ax_3d.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], color=frustum_color,
+                                    linestyle=frustum_style, lw=frustum_lw)
+            else:
+                self.log_debug(f"Camera Y={cam_p_w[1]:.2f}mm. Projecting frustum far plane to Y=0.")
+                plane_N = np.array([0, 1, 0])
+                plane_P0_y = 0.0  # Y=0 plane
+                max_draw_t_factor = dist_scl * 10  # Max distance to draw ray if intersection is too far
+
+                for p_at_z1 in pts_cam_at_z1:
+                    ray_dir_world = R_cw @ p_at_z1  # World direction vector of the ray
+                    denom = np.dot(ray_dir_world, plane_N)
+
+                    if abs(denom) > 1e-6:  # Ray is not parallel to plane
+                        t = (plane_P0_y - cam_p_w[1]) / denom
+                        if t > 1e-3:  # Intersection is in front of camera
+                            intersect_pt = cam_p_w + t * ray_dir_world
+                            # Cap distance if intersection is extremely far
+                            if np.linalg.norm(intersect_pt - cam_p_w) > max_draw_t_factor:
+                                unit_ray_dir = ray_dir_world / np.linalg.norm(ray_dir_world)
+                                intersect_pt = cam_p_w + max_draw_t_factor * unit_ray_dir
+                            far_corners_world.append(intersect_pt)
+                        else:
+                            far_corners_world.append(None)  # Intersection behind or at camera
+                    else:
+                        far_corners_world.append(None)  # Ray parallel
+
+                # Draw polygon on Y=0 if we have 4 valid corners
+                valid_far_Y0_corners = [p for p in far_corners_world if p is not None]
+                if len(valid_far_Y0_corners) == 4:
+                    poly_on_ground_verts = [[valid_far_Y0_corners[0], valid_far_Y0_corners[1],
+                                             valid_far_Y0_corners[2], valid_far_Y0_corners[3]]]
+                    poly_on_ground = Poly3DCollection(poly_on_ground_verts,
+                                                      facecolors=frustum_color, alpha=0.15,
+                                                      edgecolors=frustum_color, linestyle=':', linewidth=1)
+                    self.ax_3d.add_collection3d(poly_on_ground)
+                    all_plot_points.extend(c.tolist() for c in valid_far_Y0_corners)
+
+            # Draw connecting lines from near to far frustum corners
+            for i in range(4):
+                if far_corners_world and i < len(far_corners_world) and far_corners_world[i] is not None:
+                    p_near, p_far = near_corners_world[i], far_corners_world[i]
+                    self.ax_3d.plot([p_near[0], p_far[0]], [p_near[1], p_far[1]], [p_near[2], p_far[2]],
+                                    color=frustum_color, linestyle=frustum_style, lw=frustum_lw)
+
+            # == 3d. Camera Target Point (visualization of where camera is looking) ==
+            target_dist_mm_sim = self.obj0_Zc_mm  # As used in update_simulation for V_view target
+            # cam_look_dir_world is already calculated
+            cam_target_sim_w = cam_p_w + cam_look_dir_world * target_dist_mm_sim
+            self.ax_3d.scatter(cam_target_sim_w[0], cam_target_sim_w[1], cam_target_sim_w[2],
+                               c='cyan', marker='o', s=10, label='Sim Target Ht', depthshade=False, edgecolors='blue')
+            if not np.any(np.isnan(cam_target_sim_w)): all_plot_points.append(cam_target_sim_w.tolist())
+
+        # --- 4. Set Plot Limits and Labels (as before, ensure it handles all_plot_points correctly) ---
+        # ... (your existing plot limits logic using valid_pts_for_lims, max_r_plot, etc.)
+        valid_pts_for_lims = [p for p in all_plot_points if p is not None and not np.any(np.isnan(p)) and len(p) == 3]
+        if valid_pts_for_lims:
+            pts_arr = np.array(valid_pts_for_lims)
             min_c, max_c = pts_arr.min(axis=0), pts_arr.max(axis=0)
-            rng_d = np.maximum(max_c - min_c, np.array([1., 1., 1.]))
+            rng_d = np.maximum(max_c - min_c, np.array([dist_scl * 0.1, dist_scl * 0.1, dist_scl * 0.1]))
+            if np.any(rng_d < 1.0): rng_d = np.maximum(rng_d, np.array([1., 1., 1.]))
             ctr = (max_c + min_c) / 2.
-            max_r = np.max(rng_d) * 0.65  # Ensure a bit more padding
-            self.ax_3d.set_xlim(ctr[0] - max_r, ctr[0] + max_r)
-            self.ax_3d.set_ylim(ctr[1] - max_r, ctr[1] + max_r)
-            self.ax_3d.set_zlim(ctr[2] - max_r, ctr[2] + max_r)
+            max_r_plot = np.max(rng_d) * 0.75 + max(2.0, dist_scl * 0.1)  # Ensure a bit more padding and min size
+            self.ax_3d.set_xlim(ctr[0] - max_r_plot, ctr[0] + max_r_plot)
+            self.ax_3d.set_ylim(ctr[1] - max_r_plot, ctr[1] + max_r_plot)
+            self.ax_3d.set_zlim(ctr[2] - max_r_plot, ctr[2] + max_r_plot)
         else:
-            self.ax_3d.set_xlim([-5, 5])
-            self.ax_3d.set_ylim([-5, 5])
-            self.ax_3d.set_zlim([-5, 5])
-        self.ax_3d.set_xlabel("X(mm)")
-        self.ax_3d.set_ylabel("Y(mm)")
-        self.ax_3d.set_zlabel("Z(mm)")
-        self.ax_3d.set_title("3D Scene")
+            self.ax_3d.set_xlim([-10, 10])
+            self.ax_3d.set_ylim([-10, 10])
+            self.ax_3d.set_zlim([-10, 10])
+
+        self.ax_3d.set_xlabel("World X (mm)")
+        self.ax_3d.set_ylabel("World Y (mm)")
+        self.ax_3d.set_zlabel("World Z (mm)")
+        self.ax_3d.set_title("3D Scene View")
+        try:
+            self.fig_3d.tight_layout()
+        except:
+            pass
         self.canvas_3d_agg.draw()
 
     def _update_object_transform(self):
@@ -490,7 +745,7 @@ class VirtualCameraSimulator:
 
     def update_simulation(self, event=None):
         self.log_debug("--- SIMULATION UPDATE START ---")
-        self.draw_context.rectangle([0, 0, self.canvas_width, self.canvas_height], fill="lightgrey")
+        self.draw_context.rectangle([0, 0, self.canvas_width, self.canvas_height], fill="white")
 
         cam_p = np.array([self.camera_pos_vars[k].get() for k in ['x', 'y', 'z']])
         cam_r_deg = np.array([self.camera_rot_vars[k].get() for k in ['rx', 'ry', 'rz']])
@@ -534,18 +789,18 @@ class VirtualCameraSimulator:
             M0 = obj0.get_model_matrix()
             MV0 = V_view @ M0
             obj0_orig_cam_h = MV0 @ np.array([0, 0, 0, 1])
-            obj0_Zc_mm = obj0_orig_cam_h[2] / obj0_orig_cam_h[3] if abs(obj0_orig_cam_h[3]) > 1e-9 else obj0_orig_cam_h[2]
+            self.obj0_Zc_mm = obj0_orig_cam_h[2] / obj0_orig_cam_h[3] if abs(obj0_orig_cam_h[3]) > 1e-9 else obj0_orig_cam_h[2]
 
             #TODO: Z offset handling
-            obj0_Zc_mm = obj0_Zc_mm - self.object_position_offset['z'].get()
+            self.obj0_Zc_mm = self.obj0_Zc_mm - self.object_position_offset['z'].get()
 
-            if obj0_Zc_mm > 0:
+            if self.obj0_Zc_mm > 0:
                 fx, fy = self.K_intrinsic[0, 0], self.K_intrinsic[1, 1]
-                self.gsdx = obj0_Zc_mm / fx if abs(fx) > 1e-6 else float('inf')
-                self.gsdy = obj0_Zc_mm / fy if abs(fy) > 1e-6 else float('inf')
-                self.gsd_info_var.set(f"GSD@Obj Zc={obj0_Zc_mm:.1f}mm \nX:{self.gsdx:.4f} mm/px \nY:{self.gsdy:.4f} mm/px")
+                self.gsdx = self.obj0_Zc_mm / fx if abs(fx) > 1e-6 else float('inf')
+                self.gsdy = self.obj0_Zc_mm / fy if abs(fy) > 1e-6 else float('inf')
+                self.gsd_info_var.set(f"GSD@Obj Zc={self.obj0_Zc_mm:.1f}mm \nX:{self.gsdx:.4f} mm/px \nY:{self.gsdy:.4f} mm/px")
             else:
-                self.gsd_info_var.set(f"GSD: Obj Zc={obj0_Zc_mm:.1f}mm (Invalid Zc)")
+                self.gsd_info_var.set(f"GSD: Obj Zc={self.obj0_Zc_mm:.1f}mm (Invalid Zc)")
         else:
             self.gsd_info_var.set("GSD (mm/px): No object")
 
@@ -619,7 +874,7 @@ class VirtualCameraSimulator:
 
         all_faces_2d.sort(key=lambda x: x[0], reverse=True)  # Painter's
         for _, pts, fill, outl in all_faces_2d:
-            if len(pts) >= 3: self.draw_context.polygon(pts, fill=fill, outline=outl, width=1)
+            if len(pts) >= 3: self.draw_context.polygon(pts, fill=fill, outline=None, width=1)
 
         if self.image_canvas:
             self.tk_image = ImageTk.PhotoImage(self.pil_image)
