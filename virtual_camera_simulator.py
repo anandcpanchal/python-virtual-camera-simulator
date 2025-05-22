@@ -555,108 +555,138 @@ class VirtualCameraSimulator:
             cx, cy = self.K_intrinsic[0, 2], self.K_intrinsic[1, 2]
             img_W, img_H = self.canvas_width, self.canvas_height
 
-            near_vis_dist_abs = max(0.1, cone_h * 0.3)  # Near plane for frustum visualization
+            near_vis_dist_abs = max(0.1, cone_h * 0.25)  # Near plane for frustum visualization
 
-            pts_cam_at_z1 = [
-                np.array([(0 - cx) / fx, (0 - cy) / fy, 1.0]), np.array([(img_W - cx) / fx, (0 - cy) / fy, 1.0]),
-                np.array([(img_W - cx) / fx, (img_H - cy) / fy, 1.0]), np.array([(0 - cx) / fx, (img_H - cy) / fy, 1.0])
+            pts_cam_at_z1 = [  # Defines ray directions from camera origin in camera space
+                np.array([(0 - cx) / fx, (0 - cy) / fy, 1.0]),
+                np.array([(img_W - cx) / fx, (0 - cy) / fy, 1.0]),
+                np.array([(img_W - cx) / fx, (img_H - cy) / fy, 1.0]),
+                np.array([(0 - cx) / fx, (img_H - cy) / fy, 1.0])
             ]
             near_corners_cam = [p_at_z1 * near_vis_dist_abs for p_at_z1 in pts_cam_at_z1]
             near_corners_world = [cam_p_w + R_cw @ p_cam for p_cam in near_corners_cam]
-            all_plot_points.extend(c.tolist() for c in near_corners_world)
+            if near_corners_world:  # Add points if they are valid
+                all_plot_points.extend(
+                    c.tolist() for c in near_corners_world if c is not None and not np.any(np.isnan(c)))
 
-            frustum_color = '#888888'
-            frustum_style = '--'
+            frustum_color = '#888888';
+            frustum_style = '--';
             frustum_lw = 0.8
             for i in range(4):  # Draw Near Plane
                 p1, p2 = near_corners_world[i], near_corners_world[(i + 1) % 4]
                 self.ax_3d.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], color=frustum_color,
                                 linestyle=frustum_style, lw=frustum_lw)
 
-            # --- Far Plane Calculation: Project to Y=0 or use fixed distance ---
-            far_corners_world = []
-            camera_on_Y0_plane_threshold = 0.1  # How close to Y=0 is considered "on the plane"
+            # --- Far Plane Calculation: Project to Z_world=0 plane ---
+            far_corners_world_on_Z0 = []  # Renamed for clarity
+            # Threshold to consider camera "on the plane" Z=0
+            camera_on_plane_threshold = 0.1  # e.g., 0.1 mm
 
-            if abs(cam_p_w[1]) < camera_on_Y0_plane_threshold:
-                self.log_debug("Camera is near/on Y=0 plane. Visualizing frustum far plane at fixed distance.")
-                far_vis_dist_abs = max(near_vis_dist_abs * 2.0, dist_scl * 0.5)  # Fallback far distance
+            # Check if camera's Z position is very close to the target plane (Z=0)
+            if abs(cam_p_w[2]) < camera_on_plane_threshold:
+                self.log_debug(
+                    f"Camera is near/on Z=0 plane (Z_cam={cam_p_w[2]:.2f}mm). Visualizing frustum far plane at fixed distance.")
+                # Fallback: draw far plane at a fixed distance along rays, not on Z=0
+                far_vis_dist_abs = max(near_vis_dist_abs * 3.0, dist_scl * 0.7)
                 far_corners_cam = [p_at_z1 * far_vis_dist_abs for p_at_z1 in pts_cam_at_z1]
-                far_corners_world = [cam_p_w + R_cw @ p_cam for p_cam in far_corners_cam]
-                # Draw this fixed far plane
+                far_corners_world_on_Z0 = [cam_p_w + R_cw @ p_cam for p_cam in
+                                           far_corners_cam]  # Use this list name for consistency
+                # Draw this fixed far plane rectangle
                 for i in range(4):
-                    p1, p2 = far_corners_world[i], far_corners_world[(i + 1) % 4]
+                    p1, p2 = far_corners_world_on_Z0[i], far_corners_world_on_Z0[(i + 1) % 4]
                     self.ax_3d.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], color=frustum_color,
                                     linestyle=frustum_style, lw=frustum_lw)
             else:
-                self.log_debug(f"Camera Y={cam_p_w[1]:.2f}mm. Projecting frustum far plane to Y=0.")
-                plane_N = np.array([0, 1, 0])
-                plane_P0_y = 0.0  # Y=0 plane
-                max_draw_t_factor = dist_scl * 10  # Max distance to draw ray if intersection is too far
+                self.log_debug(f"Camera Z={cam_p_w[2]:.2f}mm. Projecting frustum far plane to Z_world=0.")
+                plane_N_Z0 = np.array([0, 0, 1])  # Normal of Z=0 plane
+                plane_P0_z_val = 0.0  # Z-value of the Z=0 plane
+
+                # Max distance to draw ray if intersection is very far or t is huge
+                # (t * norm(ray_dir_world) = world distance)
+                # Let's cap the world distance for projection lines
+                max_projection_line_length = dist_scl * 10
 
                 for p_at_z1 in pts_cam_at_z1:
-                    ray_dir_world = R_cw @ p_at_z1  # World direction vector of the ray
-                    denom = np.dot(ray_dir_world, plane_N)
+                    ray_dir_world = R_cw @ p_at_z1  # World direction vector of the ray from camera eye
 
-                    if abs(denom) > 1e-6:  # Ray is not parallel to plane
-                        t = (plane_P0_y - cam_p_w[1]) / denom
-                        if t > 1e-3:  # Intersection is in front of camera
+                    # Denominator for t: dot(ray_dir_world, plane_N_Z0) which is ray_dir_world[2]
+                    denom = ray_dir_world[2]
+
+                    if abs(denom) > 1e-6:  # Ray is not parallel to the Z=0 plane
+                        # t = (plane_P0_z_val - cam_p_w[2]) / denom
+                        t = -cam_p_w[2] / denom  # Simpler for Z=0 plane
+
+                        if t > 1e-3:  # Intersection must be in front of the camera (positive t)
                             intersect_pt = cam_p_w + t * ray_dir_world
-                            # Cap distance if intersection is extremely far
-                            if np.linalg.norm(intersect_pt - cam_p_w) > max_draw_t_factor:
-                                unit_ray_dir = ray_dir_world / np.linalg.norm(ray_dir_world)
-                                intersect_pt = cam_p_w + max_draw_t_factor * unit_ray_dir
-                            far_corners_world.append(intersect_pt)
-                        else:
-                            far_corners_world.append(None)  # Intersection behind or at camera
-                    else:
-                        far_corners_world.append(None)  # Ray parallel
 
-                # Draw polygon on Y=0 if we have 4 valid corners
-                valid_far_Y0_corners = [p for p in far_corners_world if p is not None]
-                if len(valid_far_Y0_corners) == 4:
-                    poly_on_ground_verts = [[valid_far_Y0_corners[0], valid_far_Y0_corners[1],
-                                             valid_far_Y0_corners[2], valid_far_Y0_corners[3]]]
+                            # Cap distance for visualization if intersection is extremely far
+                            if np.linalg.norm(intersect_pt - cam_p_w) > max_projection_line_length:
+                                unit_ray_dir = ray_dir_world / np.linalg.norm(ray_dir_world)
+                                intersect_pt = cam_p_w + max_projection_line_length * unit_ray_dir
+                                self.log_debug(
+                                    f"Capping frustum ray to Z=0 plane at {max_projection_line_length:.1f}mm")
+
+                            far_corners_world_on_Z0.append(intersect_pt)
+                        else:
+                            far_corners_world_on_Z0.append(None)  # Intersection behind or at camera
+                            self.log_debug(
+                                f"Frustum ray (world_dir_z={ray_dir_world[2]:.2f}) for Z=0: t={t:.2f} (behind/at cam)")
+                    else:  # Ray parallel to Z=0 plane
+                        far_corners_world_on_Z0.append(None)
+                        self.log_debug(f"Frustum ray (world_dir_z={ray_dir_world[2]:.2f}) parallel to Z=0 plane.")
+
+                # Draw polygon on Z=0 if we have 4 valid corners
+                valid_far_Z0_corners = [p for p in far_corners_world_on_Z0 if p is not None]
+                if len(valid_far_Z0_corners) == 4:
+                    poly_on_ground_verts = [[valid_far_Z0_corners[0], valid_far_Z0_corners[1],
+                                             valid_far_Z0_corners[2], valid_far_Z0_corners[3]]]
                     poly_on_ground = Poly3DCollection(poly_on_ground_verts,
-                                                      facecolors=frustum_color, alpha=0.15,
-                                                      edgecolors=frustum_color, linestyle=':', linewidth=1)
+                                                      facecolors=frustum_color, alpha=0.10,  # More transparent
+                                                      edgecolors=frustum_color, linestyle='-',
+                                                      linewidth=frustum_lw * 1.2)  # Solid line for base
                     self.ax_3d.add_collection3d(poly_on_ground)
-                    all_plot_points.extend(c.tolist() for c in valid_far_Y0_corners)
+                    if valid_far_Z0_corners:  # Add points if they are valid
+                        all_plot_points.extend(
+                            c.tolist() for c in valid_far_Z0_corners if c is not None and not np.any(np.isnan(c)))
 
             # Draw connecting lines from near to far frustum corners
+            # (far_corners_world_on_Z0 replaces the generic far_corners_world from previous logic)
             for i in range(4):
-                if far_corners_world and i < len(far_corners_world) and far_corners_world[i] is not None:
-                    p_near, p_far = near_corners_world[i], far_corners_world[i]
+                if far_corners_world_on_Z0 and i < len(far_corners_world_on_Z0) and far_corners_world_on_Z0[
+                    i] is not None:
+                    p_near, p_far = near_corners_world[i], far_corners_world_on_Z0[i]
                     self.ax_3d.plot([p_near[0], p_far[0]], [p_near[1], p_far[1]], [p_near[2], p_far[2]],
                                     color=frustum_color, linestyle=frustum_style, lw=frustum_lw)
 
-            # == 3d. Camera Target Point (visualization of where camera is looking) ==
-            target_dist_mm_sim = self.obj0_Zc_mm  # As used in update_simulation for V_view target
-            # cam_look_dir_world is already calculated
+            # == 3d. Camera Target Point (visualization - as before) ==
+            # ... (camera target scatter plot logic) ...
+            target_dist_mm_sim = 50.0  # Match with update_simulation's V_view calculation
             cam_target_sim_w = cam_p_w + cam_look_dir_world * target_dist_mm_sim
             self.ax_3d.scatter(cam_target_sim_w[0], cam_target_sim_w[1], cam_target_sim_w[2],
-                               c='cyan', marker='o', s=10, label='Sim Target Ht', depthshade=False, edgecolors='blue')
+                               c='cyan', marker='X', s=50, label='Sim Target Pt', depthshade=False, edgecolors='blue')
             if not np.any(np.isnan(cam_target_sim_w)): all_plot_points.append(cam_target_sim_w.tolist())
 
-        # --- 4. Set Plot Limits and Labels (as before, ensure it handles all_plot_points correctly) ---
-        # ... (your existing plot limits logic using valid_pts_for_lims, max_r_plot, etc.)
+            # --- 4. Set Plot Limits and Labels (as before) ---
+            # ... (your existing plot limits logic using valid_pts_for_lims, max_r_plot, etc.) ...
+            # (Ensure all_plot_points has been populated correctly before this)
         valid_pts_for_lims = [p for p in all_plot_points if p is not None and not np.any(np.isnan(p)) and len(p) == 3]
         if valid_pts_for_lims:
-            pts_arr = np.array(valid_pts_for_lims)
+            pts_arr = np.array(valid_pts_for_lims);
             min_c, max_c = pts_arr.min(axis=0), pts_arr.max(axis=0)
-            rng_d = np.maximum(max_c - min_c, np.array([dist_scl * 0.1, dist_scl * 0.1, dist_scl * 0.1]))
+            rng_d = np.maximum(max_c - min_c, np.array([dist_scl * 0.1, dist_scl * 0.1, dist_scl * 0.1]));
             if np.any(rng_d < 1.0): rng_d = np.maximum(rng_d, np.array([1., 1., 1.]))
             ctr = (max_c + min_c) / 2.
-            max_r_plot = np.max(rng_d) * 0.75 + max(2.0, dist_scl * 0.1)  # Ensure a bit more padding and min size
-            self.ax_3d.set_xlim(ctr[0] - max_r_plot, ctr[0] + max_r_plot)
-            self.ax_3d.set_ylim(ctr[1] - max_r_plot, ctr[1] + max_r_plot)
+            max_r_plot = np.max(rng_d) * 0.75 + max(2.0, dist_scl * 0.1)
+            self.ax_3d.set_xlim(ctr[0] - max_r_plot, ctr[0] + max_r_plot);
+            self.ax_3d.set_ylim(ctr[1] - max_r_plot, ctr[1] + max_r_plot);
             self.ax_3d.set_zlim(ctr[2] - max_r_plot, ctr[2] + max_r_plot)
         else:
-            self.ax_3d.set_xlim([-10, 10])
-            self.ax_3d.set_ylim([-10, 10])
+            self.ax_3d.set_xlim([-10, 10]);
+            self.ax_3d.set_ylim([-10, 10]);
             self.ax_3d.set_zlim([-10, 10])
 
-        self.ax_3d.set_xlabel("World X (mm)")
-        self.ax_3d.set_ylabel("World Y (mm)")
+        self.ax_3d.set_xlabel("World X (mm)");
+        self.ax_3d.set_ylabel("World Y (mm)");
         self.ax_3d.set_zlabel("World Z (mm)")
         self.ax_3d.set_title("3D Scene View")
         try:
