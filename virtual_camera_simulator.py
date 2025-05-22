@@ -702,7 +702,7 @@ class VirtualCameraSimulator:
 
         all_faces_2d.sort(key=lambda x: x[0], reverse=True)  # Painter's
         for _, pts, fill, outl in all_faces_2d:
-            if len(pts) >= 3: self.draw_context.polygon(pts, fill=fill, outline=outl, width=1)
+            if len(pts) >= 3: self.draw_context.polygon(pts, fill=fill, outline=None, width=1)
 
         if self.image_canvas:
             self.tk_image = ImageTk.PhotoImage(self.pil_image)
