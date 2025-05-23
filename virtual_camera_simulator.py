@@ -259,9 +259,6 @@ class VirtualCameraSimulator:
                 # Or disable physical params entries via _on_intrinsic_mode_change
                 self.log_debug("Direct fx/fy edit; physical params are now out of sync/N/A.")
 
-            self.gsdx = self.obj0_Zc_mm / float(self.k_entry_vars["k_00"].get())
-            self.gsdy = self.obj0_Zc_mm / float(self.k_entry_vars["k_11"].get())
-
             self.update_simulation()
         except ValueError:
             self.log_debug(f"Invalid direct input for K entry {k_key}: '{val_str}'")
@@ -297,9 +294,6 @@ class VirtualCameraSimulator:
             except:  # Handle case where entries might not be valid floats yet
                 self.log_debug("Could not parse direct fx/fy on mode switch, K might be stale.")
 
-        self.gsdx = self.obj0_Zc_mm / float(self.k_entry_vars["k_00"].get())
-        self.gsdy = self.obj0_Zc_mm / float(self.k_entry_vars["k_11"].get())
-
         self.update_simulation()  # Refresh based on current K
 
     # You will also need the _on_app_content_frame_configure method:
@@ -327,7 +321,7 @@ class VirtualCameraSimulator:
             if current_widget == self.canvas_3d_agg.get_tk_widget() if self.canvas_3d_agg else False:
                 # self.log_debug("Root scroll: Event over 3D canvas, allowing Matplotlib to handle.")
                 return  # Let Matplotlib's default scroll (if any) take over
-            if current_widget == self.controls_frame:  # If controls panel had its own scroll
+            if current_widget == self.app_content_frame:  # If controls panel had its own scroll
                 # self.log_debug("Root scroll: Event over controls canvas, allowing its scroll.")
                 # return # Let controls_canvas scroll itself if it's independently scrollable
                 pass  # For now, let root scroll even if over controls canvas, as controls are not independently scrollable here.
@@ -428,9 +422,15 @@ class VirtualCameraSimulator:
             mid_x, mid_y = (p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2
             self.measurement_text_id_2d = self.image_canvas.create_text(mid_x, mid_y - 10, text=txt, fill="blue",
                                                                         font=("Arial", 10, "bold"), anchor=tk.S)
+
+            actual_obj0_Zc_for_gsd = self.obj0_Zc_mm - self.object_position_offset['z'].get()
+            fx, fy = self.K_intrinsic[0, 0], self.K_intrinsic[1, 1]
+            gsdx = actual_obj0_Zc_for_gsd / fx if abs(fx) > 1e-6 else float('inf')
+            gsdy = actual_obj0_Zc_for_gsd / fy if abs(fy) > 1e-6 else float('inf')
+
             self.measure_2d_status_var.set(f"Measured: {txt}. Click 1st for new.")
-            self.measure_2d_x_measurement_var.set(f"Measured: {dist * self.gsdx : .4f} mm if along x-axis")
-            self.measure_2d_y_measurement_var.set(f"Measured: {dist * self.gsdy : .4f} mm if along y-axis")
+            self.measure_2d_x_measurement_var.set(f"Measured: {dist * gsdx : .4f} mm if along x-axis")
+            self.measure_2d_y_measurement_var.set(f"Measured: {dist * gsdy : .4f} mm if along y-axis")
             self.measurement_points_2d = []
 
     def _update_offset(self):
