@@ -66,9 +66,9 @@ class VirtualCameraSimulator:
         self.K_intrinsic = create_intrinsic_matrix(fx=self.fx_direct_val.get(), fy=self.fy_direct_val.get(),
                                                    cx=self.cx_val.get(), cy=self.cy_val.get(), s=self.s_val.get())
         self.aperture = tk.DoubleVar(value=5.6)
-        self.focal_length_mm_var = tk.DoubleVar(value=35.0)  # Example
-        self.pixel_width_micron_var = tk.DoubleVar(value=3.45)
-        self.pixel_height_micron_var = tk.DoubleVar(value=3.45)
+        self.focal_length_mm_var = tk.DoubleVar(value=8.0)  # Example
+        self.pixel_width_micron_var = tk.DoubleVar(value=1.6)
+        self.pixel_height_micron_var = tk.DoubleVar(value=1.6)
         self.intrinsic_input_mode_var = tk.StringVar(value="physical_params")
         self.camera_pos_vars = {'x': tk.DoubleVar(value=0.0), 'y': tk.DoubleVar(value=0.0),
                                 'z': tk.DoubleVar(value=100.0)}
@@ -128,7 +128,7 @@ class VirtualCameraSimulator:
         self.obj0_Zc_mm = self.camera_pos_vars['z'].get()
         self.gsdx, self.gsdy = None, None
         self.show_2d_grid_var = tk.BooleanVar(value=False)
-        self.grid_spacing_px_var = tk.IntVar(value=20)
+        self.grid_spacing_px_var = tk.IntVar(value=5)
         self.current_2d_zoom_scale = 1.0
         self.min_2d_zoom = 0.1
         self.max_2d_zoom = 10.0
