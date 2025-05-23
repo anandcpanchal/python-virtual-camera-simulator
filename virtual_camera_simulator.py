@@ -14,161 +14,179 @@ import datetime
 
 # --- Main Simulator Class ---
 class VirtualCameraSimulator:
-    # __init__ and other methods will go here
     def __init__(self, root):
         self.root = root
         self.root.title("Virtual Camera Simulator")
-        self.root.state('zoomed')
-        # Configure root window's grid to allow the main scrollable area to expand
+        try:
+            self.root.state('zoomed')
+        except tk.TclError:
+            # self.log_debug is not defined yet, so we can't call it here.
+            # Consider defining a basic print logger early or skip logging for this specific error.
+            print("INFO: Could not set root window to 'zoomed' state (platform dependent).")
+
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
 
-        # --- Create a Canvas and Scrollbars for the ENTIRE window content ---
-        # This outer_container holds the root_canvas and its scrollbars
         outer_scrollable_container = ttk.Frame(self.root)
         outer_scrollable_container.grid(row=0, column=0, sticky='nsew')
         outer_scrollable_container.grid_rowconfigure(0, weight=1)
         outer_scrollable_container.grid_columnconfigure(0, weight=1)
 
         self.root_canvas = tk.Canvas(outer_scrollable_container, borderwidth=0, highlightthickness=0)
-
         self.v_scrollbar = ttk.Scrollbar(outer_scrollable_container, orient="vertical", command=self.root_canvas.yview)
         self.h_scrollbar = ttk.Scrollbar(outer_scrollable_container, orient="horizontal",
                                          command=self.root_canvas.xview)
-
         self.root_canvas.configure(yscrollcommand=self.v_scrollbar.set, xscrollcommand=self.h_scrollbar.set)
-
-        # Grid layout for canvas and scrollbars within outer_scrollable_container
         self.root_canvas.grid(row=0, column=0, sticky='nsew')
         self.v_scrollbar.grid(row=0, column=1, sticky='ns')
-        self.h_scrollbar.grid(row=1, column=0, sticky='ew')  # Horizontal scrollbar at the bottom
+        self.h_scrollbar.grid(row=1, column=0, sticky='ew')
 
-        # This frame will hold ALL application content and be placed inside root_canvas
-        self.app_content_frame = ttk.Frame(self.root_canvas, padding=(5, 5))  # Add some padding
-
-        # Place app_content_frame onto the root_canvas
+        self.app_content_frame = ttk.Frame(self.root_canvas, padding=(5, 5))
         self.root_canvas.create_window((0, 0), window=self.app_content_frame, anchor="nw", tags="app_content_frame_tag")
-
-        # Update scrollregion when app_content_frame's size changes
         self.app_content_frame.bind("<Configure>", self._on_app_content_frame_configure)
 
-        # Configure grid weights for app_content_frame children (controls and main display)
-        self.app_content_frame.grid_columnconfigure(0, weight=0)  # Controls column, initial width determined by content
-        self.app_content_frame.grid_columnconfigure(1, weight=1)  # Display column, will expand
-        self.app_content_frame.grid_rowconfigure(0, weight=1)  # The single row expands vertically
+        # Configure 3-Column Layout for app_content_frame
+        self.app_content_frame.grid_columnconfigure(0, weight=1)  # Column 1 ratio
+        self.app_content_frame.grid_columnconfigure(1, weight=2)  # Column 2 ratio
+        self.app_content_frame.grid_columnconfigure(2, weight=1)  # Column 3 ratio
+        self.app_content_frame.grid_rowconfigure(0, weight=1)  # Single row expands vertically
 
-        # --- Initialize your variables (objects, K, camera, etc.) ---
+        # --- Initialize variables (based on your last provided __init__) ---
         self.objects_3d = []
-        # Note: _create_default_object will be called later or needs self.obj_transform_vars
 
-        self.canvas_width, self.canvas_height = 640, 360
-        # Initial K_intrinsic values (fx, fy in PIXELS; cx, cy in PIXELS)
-        # These will be the defaults if "Direct K" mode is chosen, or calculated if "Physical" mode is chosen.
-        self.fx_direct_val = tk.DoubleVar(value=self.canvas_width * 1.2)
-        self.fy_direct_val = tk.DoubleVar(value=self.canvas_height * 1.2)
-        self.cx_val = tk.DoubleVar(value=self.canvas_width / 2.0)
-        self.cy_val = tk.DoubleVar(value=self.canvas_height / 2.0)
+        self.canvas_width, self.canvas_height = 640, 360  # Your values
+        fx_init = self.canvas_width * 1.0  # Adjusted for potentially less distortion, or your preference
+        fy_init = self.canvas_width * 1.0  # Often fx=fy for square pixels effect, adjust height if aspect different
+        cx_init, cy_init = self.canvas_width / 2.0, self.canvas_height / 2.0
+        self.fx_direct_val = tk.DoubleVar(value=fx_init);
+        self.fy_direct_val = tk.DoubleVar(value=fy_init)
+        self.cx_val = tk.DoubleVar(value=cx_init);
+        self.cy_val = tk.DoubleVar(value=cy_init)
         self.s_val = tk.DoubleVar(value=0.0)
-
-        self.K_intrinsic = create_intrinsic_matrix(
-            fx=self.fx_direct_val.get(), fy=self.fy_direct_val.get(),
-            cx=self.cx_val.get(), cy=self.cy_val.get(), s=self.s_val.get()
-        )
+        self.K_intrinsic = create_intrinsic_matrix(fx=self.fx_direct_val.get(), fy=self.fy_direct_val.get(),
+                                                   cx=self.cx_val.get(), cy=self.cy_val.get(), s=self.s_val.get())
         self.aperture = tk.DoubleVar(value=5.6)
-
-        # --- New Physical Camera Parameters ---
-        self.focal_length_mm_var = tk.DoubleVar(value=16.0)  # e.g., 16mm lens
-        self.pixel_width_micron_var = tk.DoubleVar(value=3.45)  # e.g., 3.45 µm pixels
+        self.focal_length_mm_var = tk.DoubleVar(value=35.0)  # Example
+        self.pixel_width_micron_var = tk.DoubleVar(value=3.45)
         self.pixel_height_micron_var = tk.DoubleVar(value=3.45)
-
-        # --- Mode for Intrinsic Input ---
-        self.intrinsic_input_mode_var = tk.StringVar(value="physical_params")  # Default to physical params
-
+        self.intrinsic_input_mode_var = tk.StringVar(value="physical_params")
         self.camera_pos_vars = {'x': tk.DoubleVar(value=0.0), 'y': tk.DoubleVar(value=0.0),
                                 'z': tk.DoubleVar(value=100.0)}
         self.camera_rot_vars = {'rx': tk.DoubleVar(value=180.0), 'ry': tk.DoubleVar(value=0.0),
-                                # Set pitch to 0 for straight initial view
                                 'rz': tk.DoubleVar(value=0.0)}
-        self.camera_transform_configs = {'x': (-200, 200, 1), 'y': (-200, 200, 1), 'z': (1, 1000, 1),
+        self.camera_transform_configs = {'x': (-500, 500, 1), 'y': (-500, 500, 1), 'z': (1, 2000, 1),
                                          'rx': (-360, 360, 1), 'ry': (-360, 360, 1), 'rz': (-360, 360, 1)}
-
-        self.object_position_offset = {'z': tk.DoubleVar(value=0.0)}  # This was in your __init__, keep if used
-
+        self.object_position_offset = {'z': tk.DoubleVar(value=0.0)}
         self.last_mouse_x, self.last_mouse_y, self.dragging_mode, self.active_object_for_drag = 0, 0, None, None
         self.debug_mode_var = tk.BooleanVar(value=False)
+        self.obj_transform_vars = {'tx': tk.DoubleVar(value=0.0), 'ty': tk.DoubleVar(value=0.0), 'tz': tk.DoubleVar(value=0.0),
+                                   'rx': tk.DoubleVar(value=0.0), 'ry': tk.DoubleVar(value=0.0), 'rz': tk.DoubleVar(value=0.0),
+                                   'sx': tk.DoubleVar(value=1.0), 'sy': tk.DoubleVar(value=1.0), 'sz': tk.DoubleVar(value=1.0)}
+        self.transform_configs = {'tx': (-200, 200, 1), 'ty': (-200, 200, 1), 'tz': (-200, 200, 1),
+                                  'rx': (-180, 180, 5), 'ry': (-360, 360, 5), 'rz': (-180, 180, 5),
+                                  'sx': (0.1, 10, 0.1), 'sy': (0.1, 10, 0.1), 'sz': (0.1, 10, 0.1)}
 
-        self.obj_transform_vars = {'tx': tk.DoubleVar(value=0.0), 'ty': tk.DoubleVar(value=0.0),
-                                   'tz': tk.DoubleVar(value=0.0),
-                                   'rx': tk.DoubleVar(value=0.0), 'ry': tk.DoubleVar(value=0.0),
-                                   'rz': tk.DoubleVar(value=0.0),
-                                   'sx': tk.DoubleVar(value=1.0), 'sy': tk.DoubleVar(value=1.0),
-                                   'sz': tk.DoubleVar(value=1.0)}
-        self.transform_configs = {'tx': (-100, 100, 1), 'ty': (-100, 100, 1), 'tz': (-100, 100, 1),
-                                  'rx': (-180, 180, 5), 'ry': (-360, 360, 5), 'rz': (-180, 180, 5), 'sx': (0.1, 5, 0.1),
-                                  'sy': (0.1, 5, 0.1), 'sz': (0.1, 5, 0.1)}
+        # --- Column Frames (Children of self.app_content_frame) ---
+        # Column 1: Will contain Camera Lens, Camera Transform, Object Management
+        self.column1_frame = ttk.Frame(self.app_content_frame, padding=(0, 0, 5, 0))  # Original controls will go here
+        self.column1_frame.grid(row=0, column=0, sticky='nsew')
 
-        # --- Reparent your main frames to be children of self.app_content_frame ---
-        self.controls_frame = ttk.LabelFrame(self.app_content_frame, text="Controls (Units: mm, deg, px)")
-        self.controls_frame.grid(row=0, column=0, sticky='ns', padx=(0, 5),
-                                 pady=0)  # Fill vertically, fixed width for controls
+        # Column 2: Displays (2D and 3D)
+        self.main_display_area = ttk.Frame(self.app_content_frame)  # This effectively IS column 2
+        self.main_display_area.grid(row=0, column=1, sticky='nsew', padx=2)
+        self.main_display_area.grid_rowconfigure(0, weight=1)
+        self.main_display_area.grid_rowconfigure(1, weight=1)
+        self.main_display_area.grid_columnconfigure(0, weight=1)
 
-        self.main_display_area = ttk.Frame(self.app_content_frame)  # This will hold 2D and 3D views
-        self.main_display_area.grid(row=0, column=1, sticky='nsew', padx=(5, 0), pady=0)
-        # Configure main_display_area to allow its children (2D and 3D frames) to expand
-        self.main_display_area.grid_rowconfigure(0, weight=1)  # image_frame row
-        self.main_display_area.grid_rowconfigure(1, weight=1)  # view_3d_frame row
-        self.main_display_area.grid_columnconfigure(0, weight=1)  # Allow content to use full width
+        # Column 3: Measurement, Debug, View Options
+        self.column3_frame = ttk.Frame(self.app_content_frame)
+        self.column3_frame.grid(row=0, column=2, sticky='nsew', padx=(2, 0))
 
-        # --- Initialize children of self.main_display_area ---
+        # --- Initialize children of self.main_display_area (Column 2) ---
         self.image_frame = ttk.LabelFrame(self.main_display_area, text="2D Projection (pixels)")
-        self.image_canvas = None  # Will be created in _setup_gui
+        self.view_3d_frame = ttk.LabelFrame(self.main_display_area, text="3D Scene View (mm)")  # For embedded view
+
+        self.image_canvas = None
         self.pil_image = Image.new("RGB", (self.canvas_width, self.canvas_height), "lightgrey")
         self.draw_context = ImageDraw.Draw(self.pil_image)
 
-        self.view_3d_frame = ttk.LabelFrame(self.main_display_area, text="3D Scene View (mm)")
-        self.fig_3d = Figure(figsize=(5, 4), dpi=100)  # Adjusted figsize for potentially smaller area
+        # Matplotlib Figure and Axes for the SINGLE EMBEDDED 3D view
+        self.fig_3d = Figure(figsize=(5, 4), dpi=100)
         self.ax_3d = self.fig_3d.add_subplot(111, projection='3d')
-        self.canvas_3d_agg = None
+        self.canvas_3d_agg = None  # For the embedded view
         self.current_V_view_for_3d_plot = np.eye(4)
 
         # UI Variables for Measurement Info
-        self.obj_dims_var = tk.StringVar(value="Obj Dims (mm): N/A")
+        self.obj_dims_var = tk.StringVar(value="Obj Dims (mm): N/A");
         self.pixel_coord_var = tk.StringVar(value="Cursor (px): (N/A)")
         self.measure_2d_status_var = tk.StringVar(value="2D Measure: OFF")
-        self.measure_2d_x_measurement_var = tk.StringVar(value="X Measure: OFF")  # Kept from your code
-        self.measure_2d_y_measurement_var = tk.StringVar(value="Y Measure: OFF")  # Kept from your code
+        self.measure_2d_x_measurement_var = tk.StringVar(value="X Est. (mm):")
+        self.measure_2d_y_measurement_var = tk.StringVar(value="Y Est. (mm):")
         self.gsd_info_var = tk.StringVar(value="GSD (mm/px): N/A")
+        self.measuring_2d_mode, self.measurement_points_2d = False, []
+        self.measurement_line_id_2d, self.measurement_text_id_2d = None, None
+        self.obj0_Zc_mm, self.gsdx, self.gsdy = self.camera_pos_vars['z'].get(), None, None
+        self.show_2d_grid_var = tk.BooleanVar(value=False);
+        self.grid_spacing_px_var = tk.IntVar(value=20)
+        self.current_2d_zoom_scale = 1.0;
+        self.min_2d_zoom = 0.1;
+        self.max_2d_zoom = 10.0;
+        self.image_on_canvas_id = None
 
-        # 2D Measurement State
-        self.measuring_2d_mode = False
-        self.measurement_points_2d = []
-        self.measurement_line_id_2d = None
-        self.measurement_text_id_2d = None
+        self._create_default_object()
 
-        # GSD related (from your __init__)
-        self.obj0_Zc_mm = self.camera_pos_vars['z'].get()
-        self.gsdx = None
-        self.gsdy = None
-        # These seem like they should be calculated in update_simulation rather than stored as members long-term
-
-        # For 2D Projection Grid
-        self.show_2d_grid_var = tk.BooleanVar(value=False)  # Default to grid being off
-        self.grid_spacing_pixels = tk.IntVar(value=5)
-        self._create_default_object()  # Now safe to call as obj_transform_vars exists
-
-        # Bind mousewheel for the root canvas for overall application scrolling
-        # This allows scrolling the main content area if it overflows the window
-        # Careful binding is needed if Matplotlib's default scroll-zoom is active on 3D canvas
-        self.root_canvas.bind("<MouseWheel>", self._on_root_mousewheel)
-        self.root_canvas.bind("<Button-4>", self._on_root_mousewheel)  # Linux scroll up
-        self.root_canvas.bind("<Button-5>", self._on_root_mousewheel)  # Linux scroll down
-        # Also bind to app_content_frame to help capture events when mouse is over it
-        self._bind_mousewheel_recursively(self.app_content_frame, self.root_canvas)
+        self.root_canvas.bind_all("<MouseWheel>", self._on_root_mousewheel)
+        self.root_canvas.bind_all("<Button-4>", self._on_root_mousewheel)
+        self.root_canvas.bind_all("<Button-5>", self._on_root_mousewheel)
+        if hasattr(self, '_bind_mousewheel_recursively'):
+            self._bind_mousewheel_recursively(self.app_content_frame, self.root_canvas)
 
         self._setup_gui()
         if self.objects_3d: self._display_object_dimensions(self.objects_3d[0])
-        self._on_intrinsic_mode_change()  # Call once to set initial state of K fields
+        self._on_intrinsic_mode_change()
         self.update_simulation()
+
+    # --- Helper methods for root scrolling (ensure these are defined) ---
+    def _on_app_content_frame_configure(self, event=None):
+        self.root_canvas.configure(scrollregion=self.root_canvas.bbox("all"))
+        self.root_canvas.itemconfig("app_content_frame_tag", width=self.root_canvas.winfo_width())
+
+    def _on_root_mousewheel(self, event):
+        widget_under_mouse = self.root.winfo_containing(event.x_root, event.y_root)
+        is_over_3d_canvas = False
+        if self.canvas_3d_agg:  # Check if embedded canvas exists
+            current = widget_under_mouse
+            while current is not None:
+                if current == self.canvas_3d_agg.get_tk_widget(): is_over_3d_canvas = True; break
+                current = current.master
+
+        if is_over_3d_canvas: return  # Let Matplotlib handle scroll on its canvas
+
+        if event.num == 4:
+            self.root_canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            self.root_canvas.yview_scroll(1, "units")
+        elif hasattr(event, 'delta') and event.delta != 0:
+            self.root_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+
+    def _scroll_target_canvas(self, event, target_canvas):
+        # Helper to prevent trying to scroll if target_canvas is None (e.g. during setup)
+        if not target_canvas: return
+
+        # Check if the event originated directly from the target_canvas or its scrollbars
+        # to prevent recursive loops or double scrolling if target_canvas also has direct binds.
+        # This check can be complex. A simple guard:
+        if event.widget == target_canvas:  # If event already on the target, its direct bind should handle it
+            return
+
+        if event.num == 4:
+            target_canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            target_canvas.yview_scroll(1, "units")
+        elif hasattr(event, 'delta') and event.delta != 0:
+            target_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        return "break"  # Important to prevent event propagation if we handled it
 
     def _physical_params_changed(self, event=None):  # Called by physical param spinboxes
         if self.intrinsic_input_mode_var.get() == "physical_params":
@@ -334,11 +352,6 @@ class VirtualCameraSimulator:
         widget.bind('<MouseWheel>', lambda e, tc=target_canvas: _scroll_target(e), add='+')
         widget.bind('<Button-4>', lambda e, tc=target_canvas: _scroll_target(e), add='+')
         widget.bind('<Button-5>', lambda e, tc=target_canvas: _scroll_target(e), add='+')
-        for child in widget.winfo_children():
-            # Be careful not to re-bind to already scrollable canvases like Matplotlib's
-            if child != (self.canvas_3d_agg.get_tk_widget() if self.canvas_3d_agg else None) and \
-                    child != self.controls_frame:  # If controls_canvas had its own scrollbar
-                self._bind_mousewheel_recursively(child, target_canvas)
 
     def _create_default_object(self):
         v = [[-10, -10, -10], [10, -10, -10], [10, 10, -10], [-10, 10, -10], [-10, -10, 10], [10, -10, 10],
@@ -492,224 +505,213 @@ class VirtualCameraSimulator:
         return filename
 
     def _setup_gui(self):
-        # --- Camera Lens Parameters Frame ---
-        cam_param_f = ttk.LabelFrame(self.controls_frame, text="Camera Lens Parameters")
-        cam_param_f.pack(pady=5, padx=5, fill=tk.X, anchor='n')
+        # --- COLUMN 1: Primary Controls ---
+        # Sections previously parented to self.controls_frame now go into self.column1_frame
 
-        # --- Intrinsic Input Mode Selection ---
+        # == Camera Lens Parameters Frame ==
+        cam_param_f = ttk.LabelFrame(self.column1_frame, text="Camera Lens Parameters")  # Parent is column1_frame
+        cam_param_f.pack(pady=5, padx=5, fill=tk.X, anchor='n')
+        # ... (All content of cam_param_f: mode_frame, physical_params_frame, intr_f, aperture, as per your _setup_gui)
+
         mode_frame = ttk.LabelFrame(cam_param_f, text="Intrinsic Definition Mode")
         mode_frame.pack(pady=5, fill=tk.X)
-
         ttk.Radiobutton(mode_frame, text="Physical Params (f-mm, pixel-µm)", variable=self.intrinsic_input_mode_var,
                         value="physical_params", command=self._on_intrinsic_mode_change).pack(anchor='w', padx=5)
         ttk.Radiobutton(mode_frame, text="Direct K Matrix (fx, fy in pixels)", variable=self.intrinsic_input_mode_var,
                         value="K_direct", command=self._on_intrinsic_mode_change).pack(anchor='w', padx=5)
-
-        # --- Physical Camera Parameters Inputs ---
         self.physical_params_frame = ttk.LabelFrame(cam_param_f, text="Physical Parameters")
         self.physical_params_frame.pack(pady=5, fill=tk.X)
-
         phys_labels = ["Focal Length (mm):", "Pixel Width (µm):", "Pixel Height (µm):"]
         phys_vars = [self.focal_length_mm_var, self.pixel_width_micron_var, self.pixel_height_micron_var]
-        phys_defaults = [16.0, 3.45, 3.45]  # Corresponding to __init__
-        phys_configs = [(1.0, 200.0, 1.0), (0.1, 20.0, 0.01), (0.1, 20.0, 0.01)]  # (from, to, increment)
-
+        phys_defaults = [16.0, 3.45, 3.45];
+        phys_configs = [(1.0, 500.0, 1.0), (0.1, 50.0, 0.01), (0.1, 50.0, 0.01)]
         for i, label_text in enumerate(phys_labels):
-            row_frame = ttk.Frame(self.physical_params_frame)
-            row_frame.pack(fill=tk.X, padx=5, pady=1)
-            ttk.Label(row_frame, text=label_text, width=18, anchor='w').pack(side=tk.LEFT)
-            # Ensure DoubleVars have default values if not set by Spinbox init
-            if phys_vars[i].get() == 0.0 and phys_defaults[i] != 0.0:  # Check for default TkDoubleVar value
-                phys_vars[i].set(phys_defaults[i])
-
-            spin = ttk.Spinbox(row_frame, from_=phys_configs[i][0], to=phys_configs[i][1],
-                               increment=phys_configs[i][2], textvariable=phys_vars[i],
-                               width=10, command=self._physical_params_changed)
-            spin.pack(side=tk.LEFT, expand=True, fill=tk.X)
-
-        # --- Intrinsic Matrix K Frame ---
-        self.intr_f = ttk.LabelFrame(cam_param_f,
-                                     text="Intrinsic Matrix K (Calculated or Direct)")  # Renamed intr_f to self.intr_f
+            rf = ttk.Frame(self.physical_params_frame);
+            rf.pack(fill=tk.X, padx=5, pady=1)
+            ttk.Label(rf, text=label_text, width=18, anchor='w').pack(side=tk.LEFT)
+            if phys_vars[i].get() == 0.0 and phys_defaults[i] != 0.0: phys_vars[i].set(phys_defaults[i])
+            ttk.Spinbox(rf, from_=phys_configs[i][0], to=phys_configs[i][1], increment=phys_configs[i][2],
+                        textvariable=phys_vars[i], width=10, command=self._physical_params_changed).pack(side=tk.LEFT,
+                                                                                                         expand=True,
+                                                                                                         fill=tk.X)
+        self.intr_f = ttk.LabelFrame(cam_param_f, text="Intrinsic Matrix K (Calculated or Direct)")
         self.intr_f.pack(pady=5, fill=tk.X)
-        self.k_entries = {}  # Store Entry widgets
-        self.k_entry_vars = {}  # Store StringVars for entries that might be display-only
-
-        k_param_map = {  # (row, col, label_text, tk_variable_for_direct_input, is_always_editable)
-            "k_00": (0, 0, "fx", self.fx_direct_val, True),  # Will be handled by mode
-            "k_01": (0, 1, "s", self.s_val, True),
-            "k_02": (0, 2, "cx", self.cx_val, True),
-            "k_10": (1, 0, "0", None, False),  # Not a tk.Var, just a label
-            "k_11": (1, 1, "fy", self.fy_direct_val, True),  # Will be handled by mode
-            "k_12": (1, 2, "cy", self.cy_val, True),
-            "k_20": (2, 0, "0", None, False),
-            "k_21": (2, 1, "0", None, False),
-            "k_22": (2, 2, "1", None, False)
-        }
-
-        for key, (r, c, label, var, always_editable) in k_param_map.items():
-            is_major_param = key in ["k_00", "k_01", "k_02", "k_11", "k_12"]
-            suffix = ": " if is_major_param and always_editable else (" " if not is_major_param else ": ")
-
-            ttk.Label(self.intr_f, text=label + suffix).grid(row=r, column=2 * c, padx=(5, 0), pady=2, sticky='w')
-
-            if var is not None:  # fx, fy, s, cx, cy
-                entry_var = tk.StringVar(value=str(round(var.get(), 3)))  # Use StringVar for display
-                self.k_entry_vars[key] = entry_var
-                entry = ttk.Entry(self.intr_f, width=8, textvariable=entry_var)
-                entry.grid(row=r, column=2 * c + 1, padx=(0, 5), pady=2, sticky='ew')
-                if always_editable or key in ["k_00", "k_11"]:  # fx, fy are special
-                    entry.bind("<FocusOut>", lambda e, k_bind=key: self._update_K_from_direct_entry(k_bind))
-                    entry.bind("<Return>", lambda e, k_bind=key: self._update_K_from_direct_entry(k_bind))
-                self.k_entries[key] = entry
-            else:  # Read-only '0' or '1'
-                val_to_show = "0.0" if label == "0" else "1.0"
-                ttk.Label(self.intr_f, text=val_to_show).grid(row=r, column=2 * c + 1, padx=(0, 5), pady=2, sticky='w')
-
-        ttk.Label(cam_param_f, text="Aperture (f-number):").pack(anchor='w', padx=5)
+        self.k_entries = {};
+        self.k_entry_vars = {}
+        k_map = {"k_00": (0, 0, "fx", self.fx_direct_val, True), "k_01": (0, 1, "s", self.s_val, True),
+                 "k_02": (0, 2, "cx", self.cx_val, True),
+                 "k_10": (1, 0, "0", None, False), "k_11": (1, 1, "fy", self.fy_direct_val, True),
+                 "k_12": (1, 2, "cy", self.cy_val, True),
+                 "k_20": (2, 0, "0", None, False), "k_21": (2, 1, "0", None, False), "k_22": (2, 2, "1", None, False)}
+        for key, (r, c, lbl, var, always_edit) in k_map.items():
+            is_maj = key in ["k_00", "k_01", "k_02", "k_11", "k_12"];
+            suffix = ": " if (is_maj and always_edit) or key in ["k_00", "k_11"] else ("  " if not is_maj else ": ")
+            if lbl == "0" or lbl == "1": suffix = "  "
+            ttk.Label(self.intr_f, text=lbl + suffix).grid(row=r, column=2 * c, padx=(5, 0), pady=2, sticky='w')
+            if var:
+                ev = tk.StringVar(value=f"{var.get():.2f}");
+                self.k_entry_vars[key] = ev
+                e = ttk.Entry(self.intr_f, width=8, textvariable=ev)
+                e.grid(row=r, column=2 * c + 1, padx=(0, 5), pady=2, sticky='ew')
+                if always_edit or key in ["k_00", "k_11"]:
+                    e.bind("<FocusOut>", lambda ev, kb=key: self._update_K_from_direct_entry(kb))
+                    e.bind("<Return>", lambda ev, kb=key: self._update_K_from_direct_entry(kb))
+                self.k_entries[key] = e
+            else:
+                ttk.Label(self.intr_f, text=("0.0" if lbl == "0" else "1.0")).grid(row=r, column=2 * c + 1, padx=(0, 5),
+                                                                                   pady=2, sticky='w')
+        ttk.Label(cam_param_f, text="Aperture (f-number):").pack(anchor='w', padx=5, pady=(5, 0))
         ttk.Scale(cam_param_f, from_=1.0, to_=32.0, orient=tk.HORIZONTAL, variable=self.aperture,
                   command=lambda e: self.update_simulation()).pack(fill=tk.X, padx=5)
-        self.ap_label = ttk.Label(cam_param_f)
+        self.ap_label = ttk.Label(cam_param_f, text=f"{self.aperture.get():.1f}")
         self.ap_label.pack(anchor='e', padx=5)
         self.aperture.trace_add("write", lambda *a: self.ap_label.config(text=f"{self.aperture.get():.1f}"))
-        self.ap_label.config(text=f"{self.aperture.get():.1f}")  # Initial text
 
-        # Camera Transform Frame
-        cam_tf_f = ttk.LabelFrame(self.controls_frame, text="Camera Transform (Pos mm, Rot deg)")
-        cam_tf_f.pack(pady=5, fill=tk.X)
-
-        # Create a frame for Position controls
-        pos_frame = ttk.Frame(cam_tf_f)
-        pos_frame.grid(row=0, column=0, padx=5, pady=5, sticky='nw')
-
-        cam_pos_labs = {'x': "Pos X:", 'y': "Pos Y:", 'z': "Pos Z:"}
+        # == Camera Transform Frame == (Parent: column1_frame)
+        cam_tf_f = ttk.LabelFrame(self.column1_frame, text="Camera Transform (Pos mm, Rot deg)")
+        cam_tf_f.pack(pady=5, padx=5, fill=tk.X, anchor='n')
+        # (Populate with pos_frame and rot_frame as in your provided _setup_gui)
+        pos_frame = ttk.Frame(cam_tf_f);
+        pos_frame.grid(row=0, column=0, padx=5, pady=5, sticky='ew')
+        rot_frame = ttk.Frame(cam_tf_f);
+        rot_frame.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
+        cam_tf_f.grid_columnconfigure(0, weight=1);
+        cam_tf_f.grid_columnconfigure(1, weight=1)
+        cam_pos_labs = {'x': "Pos X:", 'y': "Pos Y:", 'z': "Pos Z:"};
         ttk.Label(pos_frame, text="Position (mm):").grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
         for i, (k, t) in enumerate(cam_pos_labs.items()):
-            ttk.Label(pos_frame, text=t).grid(row=i + 1, column=0, sticky='w', pady=1)
-            cfg = self.camera_transform_configs[k]
+            ttk.Label(pos_frame, text=t).grid(row=i + 1, column=0, sticky='w', pady=1, padx=(0, 2))
+            cfg = self.camera_transform_configs[k];
             ttk.Spinbox(pos_frame, from_=cfg[0], to=cfg[1], increment=cfg[2], textvariable=self.camera_pos_vars[k],
-                        width=8, command=self.update_simulation).grid(row=i + 1, column=1, sticky='ew', pady=1)
-
-        # Create a frame for Orientation controls
-        rot_frame = ttk.Frame(cam_tf_f)
-        rot_frame.grid(row=0, column=1, padx=5, pady=5, sticky='nw')
-
-        cam_rot_labs = {'rx': "PitchX°:", 'ry': "YawY°:", 'rz': "RollZ°:"}
+                        width=7, command=self.update_simulation).grid(row=i + 1, column=1, sticky='ew', pady=1)
+        cam_rot_labs = {'rx': "PitchX°:", 'ry': "YawY°:", 'rz': "RollZ°:"};
         ttk.Label(rot_frame, text="Orientation (deg):").grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
         for i, (k, t) in enumerate(cam_rot_labs.items()):
-            ttk.Label(rot_frame, text=t).grid(row=i + 1, column=0, sticky='w', pady=1)
-            cfg = self.camera_transform_configs[k]
+            ttk.Label(rot_frame, text=t).grid(row=i + 1, column=0, sticky='w', pady=1, padx=(0, 2))
+            cfg = self.camera_transform_configs[k];
             ttk.Spinbox(rot_frame, from_=cfg[0], to=cfg[1], increment=cfg[2], textvariable=self.camera_rot_vars[k],
-                        width=8, command=self.update_simulation).grid(row=i + 1, column=1, sticky='ew', pady=1)
+                        width=7, command=self.update_simulation).grid(row=i + 1, column=1, sticky='ew', pady=1)
 
-        # Configure column weights so frames expand nicely
-        cam_tf_f.grid_columnconfigure(0, weight=1)
-        cam_tf_f.grid_columnconfigure(1, weight=1)
-
-        # Object Management Frame
-        self.obj_mgmt_frame = ttk.LabelFrame(self.controls_frame, text="Object (Vertices in mm)")
-        self.obj_mgmt_frame.pack(pady=5, fill=tk.X)
-        ttk.Button(self.obj_mgmt_frame, text="Load (.obj)", command=self.load_object).pack(pady=(5, 0), padx=5,
-                                                                                           fill=tk.X)
-        dims_info_f = ttk.LabelFrame(self.obj_mgmt_frame, text="Info")
+        # == Object Management Frame == (Parent: column1_frame)
+        obj_mgmt_f = ttk.LabelFrame(self.column1_frame, text="Object (Vertices in mm)")  # Using obj_mgmt_f as var
+        obj_mgmt_f.pack(pady=5, padx=5, fill=tk.X, anchor='n')
+        # (Populate with Load button, dims_info_f, obj_tf_f as in your provided _setup_gui)
+        ttk.Button(obj_mgmt_f, text="Load (.obj)", command=self.load_object).pack(pady=(5, 0), padx=5, fill=tk.X)
+        dims_info_f = ttk.LabelFrame(obj_mgmt_f, text="Object Info");
         dims_info_f.pack(pady=5, padx=5, fill=tk.X)
         ttk.Label(dims_info_f, textvariable=self.obj_dims_var, justify=tk.LEFT).pack(padx=5, pady=5, fill=tk.X)
-        obj_tf_f = ttk.LabelFrame(self.obj_mgmt_frame, text="Transform (Translate mm)")
+        obj_tf_f = ttk.LabelFrame(obj_mgmt_f, text="Object Transform (Translate mm)");
         obj_tf_f.pack(pady=5, padx=5, fill=tk.X)
         obj_tf_labs = {'tx': "TrX:", 'ty': "TrY:", 'tz': "TrZ:", 'rx': "RotX°:", 'ry': "RotY°:", 'rz': "RotZ°:",
                        'sx': "ScX:", 'sy': "ScY:", 'sz': "ScZ:"}
         for i, (k, t) in enumerate(obj_tf_labs.items()):
-            r, c = divmod(i, 3)
-            ttk.Label(obj_tf_f, text=t).grid(row=r, column=c * 2, sticky='w', padx=(5, 0), pady=1)
-            cfg = self.transform_configs[k]
+            r_obj, c_obj = divmod(i, 3);
+            ttk.Label(obj_tf_f, text=t).grid(row=r_obj, column=c_obj * 2, sticky='w', padx=(5, 0), pady=1)
+            cfg = self.transform_configs[k];
             ttk.Spinbox(obj_tf_f, from_=cfg[0], to=cfg[1], increment=cfg[2], textvariable=self.obj_transform_vars[k],
-                        width=6, command=self._update_object_transform).grid(row=r, column=c * 2 + 1, sticky='ew',
-                                                                             padx=(0, 5), pady=1)
+                        width=6, command=self._update_object_transform).grid(row=r_obj, column=c_obj * 2 + 1,
+                                                                             sticky='ew', padx=(0, 5), pady=1)
+            obj_tf_f.grid_columnconfigure(c_obj * 2 + 1, weight=1)
 
-        # Measurement Tools Frame
-        measure_f = ttk.LabelFrame(self.controls_frame, text="Measurement Tools")
-        measure_f.pack(pady=5, fill=tk.X)
+        # --- COLUMN 2: Display Areas ---
+        # self.image_frame and self.view_3d_frame are children of self.column2_displays_frame (which IS self.main_display_area)
+        # Their .grid() calls place them within self.column2_displays_frame
+        self.image_frame.grid(row=0, column=0, sticky='nsew', pady=(0, 5))
+        self.image_canvas = tk.Canvas(self.image_frame, width=self.canvas_width, height=self.canvas_height,
+                                      bg="darkgrey", highlightthickness=0)  # Changed from lightgrey to darkgrey
+        self.image_canvas.grid(row=0, column=0, sticky='nsew')
+        self.image_frame.grid_rowconfigure(0, weight=1);
+        self.image_frame.grid_columnconfigure(0, weight=1)
+        self.image_canvas_v_scroll = ttk.Scrollbar(self.image_frame, orient="vertical", command=self.image_canvas.yview)
+        self.image_canvas_v_scroll.grid(row=0, column=1, sticky='ns')
+        self.image_canvas_h_scroll = ttk.Scrollbar(self.image_frame, orient="horizontal",
+                                                   command=self.image_canvas.xview)
+        self.image_canvas_h_scroll.grid(row=1, column=0, sticky='ew')
+        self.image_canvas.configure(yscrollcommand=self.image_canvas_v_scroll.set,
+                                    xscrollcommand=self.image_canvas_h_scroll.set)
 
+        bottom_bar_2d = ttk.Frame(self.image_frame)
+        bottom_bar_2d.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(2, 0))
+
+        # Grid controls are now in Column 3. Save button and pixel coord label remain here.
+        ttk.Button(bottom_bar_2d, text="Save 2D Projection", command=self._save_2d_projection_as_image).pack(
+            side=tk.LEFT, padx=5, pady=2)
+        ttk.Label(bottom_bar_2d, textvariable=self.pixel_coord_var).pack(side=tk.RIGHT, padx=5, pady=2)
+
+        # Bindings for image_canvas (as per your setup)
+        self.image_canvas.bind("<Motion>", self._on_mouse_hover_2d_canvas);
+        self.image_canvas.bind("<Leave>", self._on_mouse_leave_2d_canvas)
+        self.image_canvas.bind("<ButtonPress-1>", self._on_mouse_press);
+        self.image_canvas.bind("<ButtonPress-3>", self._on_mouse_press)
+        self.image_canvas.bind("<B1-Motion>", self._on_mouse_motion);
+        self.image_canvas.bind("<B3-Motion>", self._on_mouse_motion)
+        self.image_canvas.bind("<ButtonRelease-1>", self._on_mouse_release);
+        self.image_canvas.bind("<ButtonRelease-3>", self._on_mouse_release)
+
+        # Embedded 3D Scene View (uses self.fig_3d for the single embedded view)
+        self.view_3d_frame.grid(row=1, column=0, sticky='nsew', pady=(5, 0))
+        self.canvas_3d_agg = FigureCanvasTkAgg(self.fig_3d, master=self.view_3d_frame)  # Use self.fig_3d
+        canvas_widget_3d_emb = self.canvas_3d_agg.get_tk_widget()
+        canvas_widget_3d_emb.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        toolbar_f_3d_emb = ttk.Frame(self.view_3d_frame)
+        toolbar_f_3d_emb.pack(side=tk.BOTTOM, fill=tk.X, expand=False)
+        toolbar_emb = NavigationToolbar2Tk(self.canvas_3d_agg, toolbar_f_3d_emb);
+        toolbar_emb.update()
+        try:
+            self.fig_3d.tight_layout()  # Use self.fig_3d
+        except Exception as e:
+            self.log_debug(f"Note: fig_3d.tight_layout() failed: {e}")
+
+        # --- COLUMN 3: Measurement, Debug, View Options ---
+        col3_parent = self.column3_frame
+
+        # == Measurement Tools Frame == (Parent: col3_parent)
+        measure_f = ttk.LabelFrame(col3_parent, text="Measurement Tools")
+        measure_f.pack(pady=5, padx=5, fill=tk.X, anchor='n')
+        # (Populate with 2D measure button, status labels, GSD, Offset-Z as in your provided _setup_gui)
         ttk.Button(measure_f, text="Measure 2D Dist (px)", command=self._toggle_measure_2d_mode).pack(pady=(5, 0),
                                                                                                       padx=5, fill=tk.X)
         ttk.Label(measure_f, textvariable=self.measure_2d_status_var).pack(padx=5)
         ttk.Label(measure_f, textvariable=self.measure_2d_x_measurement_var).pack(padx=5)
         ttk.Label(measure_f, textvariable=self.measure_2d_y_measurement_var).pack(padx=5)
         ttk.Label(measure_f, textvariable=self.gsd_info_var, justify=tk.LEFT).pack(pady=5, padx=5, fill=tk.X)
+        offset_z_frame = ttk.Frame(measure_f);
+        offset_z_frame.pack(pady=(5, 0), padx=5, fill=tk.X)
+        ttk.Label(offset_z_frame, text="GSD Obj Z-Offset(mm):").grid(row=0, column=0, sticky='w', padx=(0, 5))
+        # Assuming self._update_offset exists or use self.update_simulation
+        ttk.Spinbox(offset_z_frame, from_=-1000, to=1000, increment=1, textvariable=self.object_position_offset['z'],
+                    width=6, command=getattr(self, '_update_offset', self.update_simulation)).grid(row=0, column=1,
+                                                                                                   sticky='ew')
+        offset_z_frame.grid_columnconfigure(1, weight=1)
 
-        # Create a new frame for the Offset-Z label and spinbox
-        offset_z_frame = ttk.Frame(measure_f)
-        offset_z_frame.pack(pady=(5, 0), padx=5, fill=tk.X)  # Pack this frame within measure_f
-
-        # Now use grid within the new offset_z_frame
-        ttk.Label(offset_z_frame, text="Offset-Z").grid(row=0, column=0, sticky='w',
-                                                        padx=(0, 5))  # Removed padx on outer frame
-        ttk.Spinbox(offset_z_frame, from_=-100, to=100, increment=1, textvariable=self.object_position_offset['z'],
-                    width=6, command=self._update_offset).grid(row=0, column=1, sticky='ew')
-
-        # Configure the column weights for the offset_z_frame to make spinbox expand
-        offset_z_frame.grid_columnconfigure(0, weight=0)  # Label doesn't need to expand
-        offset_z_frame.grid_columnconfigure(1, weight=1)  # Spinbox will take available space
-
-        # Debug Frame
-        debug_f = ttk.LabelFrame(self.controls_frame, text="Debugging")
-        debug_f.pack(pady=5, fill=tk.X)
+        # == Debug Frame == (Parent: col3_parent)
+        debug_f = ttk.LabelFrame(col3_parent, text="Debugging")
+        debug_f.pack(pady=5, padx=5, fill=tk.X, anchor='n')
         ttk.Checkbutton(debug_f, text="Enable Debug Log", variable=self.debug_mode_var,
                         command=self._on_debug_toggle).pack(pady=5, padx=5, anchor='w')
 
-        # Display Areas
-        self.image_frame.pack(side=tk.TOP, padx=0, pady=(0, 5), expand=True, fill="both")  # No X padx for image_frame
-        self.image_canvas = tk.Canvas(self.image_frame, width=self.canvas_width, height=self.canvas_height,
-                                      bg="lightgrey")
-        self.image_canvas.pack(expand=True, fill="both")
+        # == View Options Frame == (Parent: col3_parent)
+        view_options_f = ttk.LabelFrame(col3_parent, text="2D View Options")  # Renamed for clarity
+        view_options_f.pack(pady=5, padx=5, fill=tk.X, anchor='n')
 
-        ttk.Label(self.image_frame, textvariable=self.pixel_coord_var).pack(side=tk.BOTTOM, fill=tk.X, padx=2, pady=2)
-        save_button = ttk.Button(self.image_frame, text="Save 2D Projection Image",
-                                 command=self._save_2d_projection_as_image)
-        save_button.pack(pady=5, padx=5, fill=tk.X)
-        grid_checkbutton = ttk.Checkbutton(
-            self.image_frame,
-            text=f"Show Pixel Grid (every {self.grid_spacing_pixels.get()}px)",
-            variable=self.show_2d_grid_var,
-            command=self.update_simulation  # Redraw simulation when toggled
-        )
-        grid_checkbutton.pack(side=tk.LEFT, padx=(0, 5), pady=2)
-        ttk.Label(self.image_frame, text="Grid Spacing (px):").pack(side=tk.LEFT, padx=(0, 5))
+        grid_controls_subframe = ttk.Frame(view_options_f)
+        grid_controls_subframe.pack(fill=tk.X, pady=(5, 0), padx=0)
+        grid_checkbutton = ttk.Checkbutton(grid_controls_subframe, text="Show Pixel Grid",
+                                           variable=self.show_2d_grid_var, command=self.update_simulation)
+        grid_checkbutton.pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(grid_controls_subframe, text="Spacing(px):").pack(side=tk.LEFT, padx=(0, 2))
+        grid_spacing_spinbox = ttk.Spinbox(grid_controls_subframe, from_=2, to=max(2, self.canvas_width // 4),
+                                           increment=1, textvariable=self.grid_spacing_px_var,
+                                           width=5, command=self.update_simulation)
+        grid_spacing_spinbox.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 0))
 
-        grid_spacing_spinbox = ttk.Spinbox(
-            self.image_frame,
-            from_=1,  # Minimum practical spacing to avoid performance issues/visual clutter
-            to=self.canvas_width // 2,  # Max sensible spacing (e.g., half canvas width)
-            increment=1,  # Allow fine adjustment, or use 5 for larger steps
-            textvariable=self.grid_spacing_pixels,
-            width=6,  # Adjust width as needed
-            command=self.update_simulation  # Redraw on change
-        )
-        grid_spacing_spinbox.pack(side=tk.LEFT, padx=(0, 5), pady=2, expand=False, fill=tk.X)
+        # Remove "Toggle Separate 3D View" button as per your request to discard that idea
+        # if hasattr(self, '_toggle_3d_window'):
+        #     open_sep_3d_button = ttk.Button(view_options_f, text="Toggle Separate 3D View", command=self._toggle_3d_window)
+        #     open_sep_3d_button.pack(pady=5, fill=tk.X)
 
-        self.image_canvas.bind("<Motion>", self._on_mouse_hover_2d_canvas)
-        self.image_canvas.bind("<Leave>", self._on_mouse_leave_2d_canvas)
-        self.image_canvas.bind("<ButtonPress-1>", self._on_mouse_press)
-        self.image_canvas.bind("<ButtonPress-3>", self._on_mouse_press)
-        self.image_canvas.bind("<B1-Motion>", self._on_mouse_motion)
-        self.image_canvas.bind("<B3-Motion>", self._on_mouse_motion)
-        self.image_canvas.bind("<ButtonRelease-1>", self._on_mouse_release)
-        self.image_canvas.bind("<ButtonRelease-3>", self._on_mouse_release)
-
-        self.view_3d_frame.pack(side=tk.BOTTOM, padx=0, pady=(5, 0), expand=True, fill="both")  # No X padx
-        self.canvas_3d_agg = FigureCanvasTkAgg(self.fig_3d, master=self.view_3d_frame)
-        self.canvas_3d_agg.draw()
-        self.canvas_3d_agg.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        # --- Add the Matplotlib Navigation Toolbar for the 3D View ---
-        toolbar_frame_3d = ttk.Frame(self.view_3d_frame)  # Create a frame for the toolbar
-        toolbar_frame_3d.pack(side=tk.BOTTOM, fill=tk.X, expand=False)  # Place it below the canvas
-
-        toolbar = NavigationToolbar2Tk(self.canvas_3d_agg, toolbar_frame_3d)
-        toolbar.update()  # Important to initialize the toolbar
-
-        try:
-            self.fig_3d.tight_layout()  # Prevent labels overlapping
-        except Exception as e:
-            self.log_debug(f"Note: fig_3d.tight_layout() failed: {e}")
+        # Initial update of aperture label
+        if hasattr(self, 'ap_label'): self.ap_label.config(text=f"{self.aperture.get():.1f}")
 
     def _on_debug_toggle(self):
         self.log_debug(f"Debug mode: {self.debug_mode_var.get()}")
@@ -1105,13 +1107,13 @@ class VirtualCameraSimulator:
         if self.show_2d_grid_var.get():
             grid_color = "#D0D0D0"
             try:
-                current_grid_spacing = self.grid_spacing_pixels.get()  # Corrected variable name
+                current_grid_spacing = self.grid_spacing_px_var.get()  # Corrected variable name
                 if current_grid_spacing < 2:  # Ensure a minimum practical spacing
                     current_grid_spacing = 2
-                    self.grid_spacing_pixels.set(current_grid_spacing)
+                    self.grid_spacing_px_var.set(current_grid_spacing)
             except tk.TclError:
                 current_grid_spacing = 20  # Fallback default
-                self.grid_spacing_pixels.set(current_grid_spacing)
+                self.grid_spacing_px_var.set(current_grid_spacing)
 
             self.log_debug(f"Drawing 2D grid with spacing: {current_grid_spacing} px")
             if current_grid_spacing > 0:
