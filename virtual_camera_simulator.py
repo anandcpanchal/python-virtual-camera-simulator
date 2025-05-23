@@ -58,9 +58,9 @@ class VirtualCameraSimulator:
         fx_init = self.canvas_width * 1.0  # Adjusted for potentially less distortion, or your preference
         fy_init = self.canvas_width * 1.0  # Often fx=fy for square pixels effect, adjust height if aspect different
         cx_init, cy_init = self.canvas_width / 2.0, self.canvas_height / 2.0
-        self.fx_direct_val = tk.DoubleVar(value=fx_init);
+        self.fx_direct_val = tk.DoubleVar(value=fx_init)
         self.fy_direct_val = tk.DoubleVar(value=fy_init)
-        self.cx_val = tk.DoubleVar(value=cx_init);
+        self.cx_val = tk.DoubleVar(value=cx_init)
         self.cy_val = tk.DoubleVar(value=cy_init)
         self.s_val = tk.DoubleVar(value=0.0)
         self.K_intrinsic = create_intrinsic_matrix(fx=self.fx_direct_val.get(), fy=self.fy_direct_val.get(),
@@ -117,7 +117,7 @@ class VirtualCameraSimulator:
         self.current_V_view_for_3d_plot = np.eye(4)
 
         # UI Variables for Measurement Info
-        self.obj_dims_var = tk.StringVar(value="Obj Dims (mm): N/A");
+        self.obj_dims_var = tk.StringVar(value="Obj Dims (mm): N/A")
         self.pixel_coord_var = tk.StringVar(value="Cursor (px): (N/A)")
         self.measure_2d_status_var = tk.StringVar(value="2D Measure: OFF")
         self.measure_2d_x_measurement_var = tk.StringVar(value="X Est. (mm):")
@@ -127,11 +127,11 @@ class VirtualCameraSimulator:
         self.measurement_line_id_2d, self.measurement_text_id_2d = None, None
         self.obj0_Zc_mm = self.camera_pos_vars['z'].get()
         self.gsdx, self.gsdy = None, None
-        self.show_2d_grid_var = tk.BooleanVar(value=False);
+        self.show_2d_grid_var = tk.BooleanVar(value=False)
         self.grid_spacing_px_var = tk.IntVar(value=20)
-        self.current_2d_zoom_scale = 1.0;
-        self.min_2d_zoom = 0.1;
-        self.max_2d_zoom = 10.0;
+        self.current_2d_zoom_scale = 1.0
+        self.min_2d_zoom = 0.1
+        self.max_2d_zoom = 10.0
         self.image_on_canvas_id = None
 
         self._create_default_object()
@@ -158,7 +158,9 @@ class VirtualCameraSimulator:
         if self.canvas_3d_agg:  # Check if embedded canvas exists
             current = widget_under_mouse
             while current is not None:
-                if current == self.canvas_3d_agg.get_tk_widget(): is_over_3d_canvas = True; break
+                if current == self.canvas_3d_agg.get_tk_widget():
+                    is_over_3d_canvas = True
+                    break
                 current = current.master
 
         if is_over_3d_canvas: return  # Let Matplotlib handle scroll on its canvas
@@ -530,10 +532,10 @@ class VirtualCameraSimulator:
         self.physical_params_frame.pack(pady=5, fill=tk.X)
         phys_labels = ["Focal Length (mm):", "Pixel Width (µm):", "Pixel Height (µm):"]
         phys_vars = [self.focal_length_mm_var, self.pixel_width_micron_var, self.pixel_height_micron_var]
-        phys_defaults = [16.0, 3.45, 3.45];
+        phys_defaults = [16.0, 3.45, 3.45]
         phys_configs = [(1.0, 500.0, 1.0), (0.1, 50.0, 0.01), (0.1, 50.0, 0.01)]
         for i, label_text in enumerate(phys_labels):
-            rf = ttk.Frame(self.physical_params_frame);
+            rf = ttk.Frame(self.physical_params_frame)
             rf.pack(fill=tk.X, padx=5, pady=1)
             ttk.Label(rf, text=label_text, width=18, anchor='w').pack(side=tk.LEFT)
             if phys_vars[i].get() == 0.0 and phys_defaults[i] != 0.0: phys_vars[i].set(phys_defaults[i])
@@ -543,7 +545,7 @@ class VirtualCameraSimulator:
                                                                                                          fill=tk.X)
         self.intr_f = ttk.LabelFrame(cam_param_f, text="Intrinsic Matrix K (Calculated or Direct)")
         self.intr_f.pack(pady=5, fill=tk.X)
-        self.k_entries = {};
+        self.k_entries = {}
         self.k_entry_vars = {}
         k_map = {"k_00": (0, 0, "fx", self.fx_direct_val, True), "k_01": (0, 1, "s", self.s_val, True),
                  "k_02": (0, 2, "cx", self.cx_val, True),
@@ -551,12 +553,12 @@ class VirtualCameraSimulator:
                  "k_12": (1, 2, "cy", self.cy_val, True),
                  "k_20": (2, 0, "0", None, False), "k_21": (2, 1, "0", None, False), "k_22": (2, 2, "1", None, False)}
         for key, (r, c, lbl, var, always_edit) in k_map.items():
-            is_maj = key in ["k_00", "k_01", "k_02", "k_11", "k_12"];
+            is_maj = key in ["k_00", "k_01", "k_02", "k_11", "k_12"]
             suffix = ": " if (is_maj and always_edit) or key in ["k_00", "k_11"] else ("  " if not is_maj else ": ")
             if lbl == "0" or lbl == "1": suffix = "  "
             ttk.Label(self.intr_f, text=lbl + suffix).grid(row=r, column=2 * c, padx=(5, 0), pady=2, sticky='w')
             if var:
-                ev = tk.StringVar(value=f"{var.get():.2f}");
+                ev = tk.StringVar(value=f"{var.get():.2f}")
                 self.k_entry_vars[key] = ev
                 e = ttk.Entry(self.intr_f, width=8, textvariable=ev)
                 e.grid(row=r, column=2 * c + 1, padx=(0, 5), pady=2, sticky='ew')
@@ -578,24 +580,24 @@ class VirtualCameraSimulator:
         cam_tf_f = ttk.LabelFrame(self.column1_frame, text="Camera Transform (Pos mm, Rot deg)")
         cam_tf_f.pack(pady=5, padx=5, fill=tk.X, anchor='n')
         # (Populate with pos_frame and rot_frame as in your provided _setup_gui)
-        pos_frame = ttk.Frame(cam_tf_f);
+        pos_frame = ttk.Frame(cam_tf_f)
         pos_frame.grid(row=0, column=0, padx=5, pady=5, sticky='ew')
-        rot_frame = ttk.Frame(cam_tf_f);
+        rot_frame = ttk.Frame(cam_tf_f)
         rot_frame.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
-        cam_tf_f.grid_columnconfigure(0, weight=1);
+        cam_tf_f.grid_columnconfigure(0, weight=1)
         cam_tf_f.grid_columnconfigure(1, weight=1)
-        cam_pos_labs = {'x': "Pos X:", 'y': "Pos Y:", 'z': "Pos Z:"};
+        cam_pos_labs = {'x': "Pos X:", 'y': "Pos Y:", 'z': "Pos Z:"}
         ttk.Label(pos_frame, text="Position (mm):").grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
         for i, (k, t) in enumerate(cam_pos_labs.items()):
             ttk.Label(pos_frame, text=t).grid(row=i + 1, column=0, sticky='w', pady=1, padx=(0, 2))
-            cfg = self.camera_transform_configs[k];
+            cfg = self.camera_transform_configs[k]
             ttk.Spinbox(pos_frame, from_=cfg[0], to=cfg[1], increment=cfg[2], textvariable=self.camera_pos_vars[k],
                         width=7, command=self.update_simulation).grid(row=i + 1, column=1, sticky='ew', pady=1)
-        cam_rot_labs = {'rx': "PitchX°:", 'ry': "YawY°:", 'rz': "RollZ°:"};
+        cam_rot_labs = {'rx': "PitchX°:", 'ry': "YawY°:", 'rz': "RollZ°:"}
         ttk.Label(rot_frame, text="Orientation (deg):").grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
         for i, (k, t) in enumerate(cam_rot_labs.items()):
             ttk.Label(rot_frame, text=t).grid(row=i + 1, column=0, sticky='w', pady=1, padx=(0, 2))
-            cfg = self.camera_transform_configs[k];
+            cfg = self.camera_transform_configs[k]
             ttk.Spinbox(rot_frame, from_=cfg[0], to=cfg[1], increment=cfg[2], textvariable=self.camera_rot_vars[k],
                         width=7, command=self.update_simulation).grid(row=i + 1, column=1, sticky='ew', pady=1)
 
@@ -604,17 +606,17 @@ class VirtualCameraSimulator:
         obj_mgmt_f.pack(pady=5, padx=5, fill=tk.X, anchor='n')
         # (Populate with Load button, dims_info_f, obj_tf_f as in your provided _setup_gui)
         ttk.Button(obj_mgmt_f, text="Load (.obj)", command=self.load_object).pack(pady=(5, 0), padx=5, fill=tk.X)
-        dims_info_f = ttk.LabelFrame(obj_mgmt_f, text="Object Info");
+        dims_info_f = ttk.LabelFrame(obj_mgmt_f, text="Object Info")
         dims_info_f.pack(pady=5, padx=5, fill=tk.X)
         ttk.Label(dims_info_f, textvariable=self.obj_dims_var, justify=tk.LEFT).pack(padx=5, pady=5, fill=tk.X)
-        obj_tf_f = ttk.LabelFrame(obj_mgmt_f, text="Object Transform (Translate mm)");
+        obj_tf_f = ttk.LabelFrame(obj_mgmt_f, text="Object Transform (Translate mm)")
         obj_tf_f.pack(pady=5, padx=5, fill=tk.X)
         obj_tf_labs = {'tx': "TrX:", 'ty': "TrY:", 'tz': "TrZ:", 'rx': "RotX°:", 'ry': "RotY°:", 'rz': "RotZ°:",
                        'sx': "ScX:", 'sy': "ScY:", 'sz': "ScZ:"}
         for i, (k, t) in enumerate(obj_tf_labs.items()):
-            r_obj, c_obj = divmod(i, 3);
+            r_obj, c_obj = divmod(i, 3)
             ttk.Label(obj_tf_f, text=t).grid(row=r_obj, column=c_obj * 2, sticky='w', padx=(5, 0), pady=1)
-            cfg = self.transform_configs[k];
+            cfg = self.transform_configs[k]
             ttk.Spinbox(obj_tf_f, from_=cfg[0], to=cfg[1], increment=cfg[2], textvariable=self.obj_transform_vars[k],
                         width=6, command=self._update_object_transform).grid(row=r_obj, column=c_obj * 2 + 1,
                                                                              sticky='ew', padx=(0, 5), pady=1)
@@ -627,7 +629,7 @@ class VirtualCameraSimulator:
         self.image_canvas = tk.Canvas(self.image_frame, width=self.canvas_width, height=self.canvas_height,
                                       bg="darkgrey", highlightthickness=0)  # Changed from lightgrey to darkgrey
         self.image_canvas.grid(row=0, column=0, sticky='nsew')
-        self.image_frame.grid_rowconfigure(0, weight=1);
+        self.image_frame.grid_rowconfigure(0, weight=1)
         self.image_frame.grid_columnconfigure(0, weight=1)
         self.image_canvas_v_scroll = ttk.Scrollbar(self.image_frame, orient="vertical", command=self.image_canvas.yview)
         self.image_canvas_v_scroll.grid(row=0, column=1, sticky='ns')
@@ -646,13 +648,13 @@ class VirtualCameraSimulator:
         ttk.Label(bottom_bar_2d, textvariable=self.pixel_coord_var).pack(side=tk.RIGHT, padx=5, pady=2)
 
         # Bindings for image_canvas (as per your setup)
-        self.image_canvas.bind("<Motion>", self._on_mouse_hover_2d_canvas);
+        self.image_canvas.bind("<Motion>", self._on_mouse_hover_2d_canvas)
         self.image_canvas.bind("<Leave>", self._on_mouse_leave_2d_canvas)
-        self.image_canvas.bind("<ButtonPress-1>", self._on_mouse_press);
+        self.image_canvas.bind("<ButtonPress-1>", self._on_mouse_press)
         self.image_canvas.bind("<ButtonPress-3>", self._on_mouse_press)
-        self.image_canvas.bind("<B1-Motion>", self._on_mouse_motion);
+        self.image_canvas.bind("<B1-Motion>", self._on_mouse_motion)
         self.image_canvas.bind("<B3-Motion>", self._on_mouse_motion)
-        self.image_canvas.bind("<ButtonRelease-1>", self._on_mouse_release);
+        self.image_canvas.bind("<ButtonRelease-1>", self._on_mouse_release)
         self.image_canvas.bind("<ButtonRelease-3>", self._on_mouse_release)
 
         # Embedded 3D Scene View (uses self.fig_3d for the single embedded view)
@@ -662,7 +664,7 @@ class VirtualCameraSimulator:
         canvas_widget_3d_emb.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         toolbar_f_3d_emb = ttk.Frame(self.view_3d_frame)
         toolbar_f_3d_emb.pack(side=tk.BOTTOM, fill=tk.X, expand=False)
-        toolbar_emb = NavigationToolbar2Tk(self.canvas_3d_agg, toolbar_f_3d_emb);
+        toolbar_emb = NavigationToolbar2Tk(self.canvas_3d_agg, toolbar_f_3d_emb)
         toolbar_emb.update()
         try:
             self.fig_3d.tight_layout()  # Use self.fig_3d
@@ -682,7 +684,7 @@ class VirtualCameraSimulator:
         ttk.Label(measure_f, textvariable=self.measure_2d_x_measurement_var).pack(padx=5)
         ttk.Label(measure_f, textvariable=self.measure_2d_y_measurement_var).pack(padx=5)
         ttk.Label(measure_f, textvariable=self.gsd_info_var, justify=tk.LEFT).pack(pady=5, padx=5, fill=tk.X)
-        offset_z_frame = ttk.Frame(measure_f);
+        offset_z_frame = ttk.Frame(measure_f)
         offset_z_frame.pack(pady=(5, 0), padx=5, fill=tk.X)
         ttk.Label(offset_z_frame, text="GSD Obj Z-Offset(mm):").grid(row=0, column=0, sticky='w', padx=(0, 5))
         # Assuming self._update_offset exists or use self.update_simulation
