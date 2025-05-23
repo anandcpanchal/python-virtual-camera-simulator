@@ -125,7 +125,8 @@ class VirtualCameraSimulator:
         self.gsd_info_var = tk.StringVar(value="GSD (mm/px): N/A")
         self.measuring_2d_mode, self.measurement_points_2d = False, []
         self.measurement_line_id_2d, self.measurement_text_id_2d = None, None
-        self.obj0_Zc_mm, self.gsdx, self.gsdy = self.camera_pos_vars['z'].get(), None, None
+        self.obj0_Zc_mm = self.camera_pos_vars['z'].get()
+        self.gsdx, self.gsdy = None, None
         self.show_2d_grid_var = tk.BooleanVar(value=False);
         self.grid_spacing_px_var = tk.IntVar(value=20)
         self.current_2d_zoom_scale = 1.0;
@@ -256,6 +257,9 @@ class VirtualCameraSimulator:
                 # Or disable physical params entries via _on_intrinsic_mode_change
                 self.log_debug("Direct fx/fy edit; physical params are now out of sync/N/A.")
 
+            self.gsdx = self.obj0_Zc_mm / float(self.k_entry_vars["k_00"].get())
+            self.gsdy = self.obj0_Zc_mm / float(self.k_entry_vars["k_11"].get())
+
             self.update_simulation()
         except ValueError:
             self.log_debug(f"Invalid direct input for K entry {k_key}: '{val_str}'")
@@ -290,6 +294,9 @@ class VirtualCameraSimulator:
                 self.K_intrinsic[1, 1] = float(self.k_entry_vars["k_11"].get())
             except:  # Handle case where entries might not be valid floats yet
                 self.log_debug("Could not parse direct fx/fy on mode switch, K might be stale.")
+
+        self.gsdx = self.obj0_Zc_mm / float(self.k_entry_vars["k_00"].get())
+        self.gsdy = self.obj0_Zc_mm / float(self.k_entry_vars["k_11"].get())
 
         self.update_simulation()  # Refresh based on current K
 
