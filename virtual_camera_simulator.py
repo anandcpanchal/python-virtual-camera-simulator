@@ -128,7 +128,7 @@ class VirtualCameraSimulator:
         self.measurement_text_id_2d = None
 
         # GSD related (from your __init__)
-        self.obj0_Zc_mm = None
+        self.obj0_Zc_mm = self.camera_pos_vars['z'].get()
         self.gsdx = None
         self.gsdy = None
         # These seem like they should be calculated in update_simulation rather than stored as members long-term
@@ -720,8 +720,8 @@ class VirtualCameraSimulator:
                 all_plot_points.extend(
                     c.tolist() for c in near_corners_world if c is not None and not np.any(np.isnan(c)))
 
-            frustum_color = '#888888';
-            frustum_style = '--';
+            frustum_color = '#888888'
+            frustum_style = '--'
             frustum_lw = 0.8
             for i in range(4):  # Draw Near Plane
                 p1, p2 = near_corners_world[i], near_corners_world[(i + 1) % 4]
@@ -822,22 +822,22 @@ class VirtualCameraSimulator:
             # (Ensure all_plot_points has been populated correctly before this)
         valid_pts_for_lims = [p for p in all_plot_points if p is not None and not np.any(np.isnan(p)) and len(p) == 3]
         if valid_pts_for_lims:
-            pts_arr = np.array(valid_pts_for_lims);
+            pts_arr = np.array(valid_pts_for_lims)
             min_c, max_c = pts_arr.min(axis=0), pts_arr.max(axis=0)
-            rng_d = np.maximum(max_c - min_c, np.array([dist_scl * 0.1, dist_scl * 0.1, dist_scl * 0.1]));
+            rng_d = np.maximum(max_c - min_c, np.array([dist_scl * 0.1, dist_scl * 0.1, dist_scl * 0.1]))
             if np.any(rng_d < 1.0): rng_d = np.maximum(rng_d, np.array([1., 1., 1.]))
             ctr = (max_c + min_c) / 2.
             max_r_plot = np.max(rng_d) * 0.75 + max(2.0, dist_scl * 0.1)
-            self.ax_3d.set_xlim(ctr[0] - max_r_plot, ctr[0] + max_r_plot);
-            self.ax_3d.set_ylim(ctr[1] - max_r_plot, ctr[1] + max_r_plot);
+            self.ax_3d.set_xlim(ctr[0] - max_r_plot, ctr[0] + max_r_plot)
+            self.ax_3d.set_ylim(ctr[1] - max_r_plot, ctr[1] + max_r_plot)
             self.ax_3d.set_zlim(ctr[2] - max_r_plot, ctr[2] + max_r_plot)
         else:
-            self.ax_3d.set_xlim([-10, 10]);
-            self.ax_3d.set_ylim([-10, 10]);
+            self.ax_3d.set_xlim([-10, 10])
+            self.ax_3d.set_ylim([-10, 10])
             self.ax_3d.set_zlim([-10, 10])
 
-        self.ax_3d.set_xlabel("World X (mm)");
-        self.ax_3d.set_ylabel("World Y (mm)");
+        self.ax_3d.set_xlabel("World X (mm)")
+        self.ax_3d.set_ylabel("World Y (mm)")
         self.ax_3d.set_zlabel("World Z (mm)")
         self.ax_3d.set_title("3D Scene View")
         try:
@@ -926,43 +926,37 @@ class VirtualCameraSimulator:
 
     def update_simulation(self, event=None):
         self.log_debug("--- SIMULATION UPDATE START ---")
-        self.draw_context.rectangle([0, 0, self.canvas_width, self.canvas_height], fill="white")
+        self.draw_context.rectangle([0, 0, self.canvas_width, self.canvas_height],fill="white")
 
         # --- Draw Pixel Grid if Enabled ---
         if self.show_2d_grid_var.get():
-            grid_color = "#D0D0D0"  # Light grey for grid lines
+            grid_color = "#D0D0D0"
             try:
-                current_grid_spacing = self.grid_spacing_pixels.get()
-                # Ensure spacing is a positive, sensible value
-                if current_grid_spacing < 1:
-                    current_grid_spacing = 1  # Minimum spacing to avoid excessive lines
-                    self.grid_spacing_pixels.set(current_grid_spacing)  # Correct the var if too low
-                if current_grid_spacing > self.canvas_width and current_grid_spacing > self.canvas_height:
-                    # If spacing is larger than canvas, no lines would be drawn by range, which is fine.
-                    pass
-
-            except tk.TclError:  # Handles case where spinbox might have invalid text during entry
-                current_grid_spacing = 1  # Fallback default
+                current_grid_spacing = self.grid_spacing_pixels.get()  # Corrected variable name
+                if current_grid_spacing < 2:  # Ensure a minimum practical spacing
+                    current_grid_spacing = 2
+                    self.grid_spacing_pixels.set(current_grid_spacing)
+            except tk.TclError:
+                current_grid_spacing = 20  # Fallback default
                 self.grid_spacing_pixels.set(current_grid_spacing)
 
             self.log_debug(f"Drawing 2D grid with spacing: {current_grid_spacing} px")
-            if current_grid_spacing > 0:  # Proceed only if spacing is valid
-                # Draw vertical lines
+            if current_grid_spacing > 0:
                 for x_coord in range(current_grid_spacing, self.canvas_width, current_grid_spacing):
                     self.draw_context.line([(x_coord, 0), (x_coord, self.canvas_height)], fill=grid_color, width=1)
-
-                # Draw horizontal lines
                 for y_coord in range(current_grid_spacing, self.canvas_height, current_grid_spacing):
                     self.draw_context.line([(0, y_coord), (self.canvas_width, y_coord)], fill=grid_color, width=1)
 
+        # --- Camera Setup ---
         cam_p = np.array([self.camera_pos_vars[k].get() for k in ['x', 'y', 'z']])
         cam_r_deg = np.array([self.camera_rot_vars[k].get() for k in ['rx', 'ry', 'rz']])
-        self.log_debug(f"Cam Pos(mm): {cam_p}, Rot(deg): {cam_r_deg}")
+        self.log_debug(
+            f"Cam Pos(mm): {cam_p}, Rot(deg): P={cam_r_deg[0]:.1f},Y={cam_r_deg[1]:.1f},R={cam_r_deg[2]:.1f}")
 
         Rrz = create_rotation_matrix_z(math.radians(cam_r_deg[2]))
         Rry = create_rotation_matrix_y(math.radians(cam_r_deg[1]))
         Rrx = create_rotation_matrix_x(math.radians(cam_r_deg[0]))
-        R_cam_world = Rrz @ Rry @ Rrx  # ZYX order for Roll, Yaw, Pitch
+        R_cam_world = Rrz @ Rry @ Rrx
 
         cam_fwd_loc_h = np.array([0, 0, -1, 0])
         cam_up_loc_h = np.array([0, 1, 0, 0])
@@ -977,42 +971,45 @@ class VirtualCameraSimulator:
         else:
             world_up /= np.linalg.norm(world_up)
 
-        target_dist_mm = 50.0  # Could be a slider too
+        target_dist_mm = self.obj0_Zc_mm
         cam_target_w = cam_p + world_fwd * target_dist_mm
         V_view = create_view_matrix(cam_p, cam_target_w, world_up)
         self.current_V_view_for_3d_plot = V_view
         self.log_debug(f"K (px):\n{self.K_intrinsic}")
-        self.log_debug(f"V_view (mm):\n{V_view}")
+        self.log_debug(f"V_view (mm to cam_mm):\n{V_view}")
 
         target_h_dof = np.append(cam_target_w, 1.0)
         focal_pt_cam_h = V_view @ target_h_dof
         focal_plane_Zc_mm = focal_pt_cam_h[2] / focal_pt_cam_h[3] if abs(focal_pt_cam_h[3]) > 1e-9 else focal_pt_cam_h[
             2]
-        f_stop = self.aperture.get()
-        self.log_debug(f"FocalPlane Zc: {focal_plane_Zc_mm:.2f}mm. Aperture: f/{f_stop:.1f}")
+        current_f_stop = self.aperture.get()  # Renamed from f_stop for clarity
+        self.log_debug(f"FocalPlane Zc: {focal_plane_Zc_mm:.2f}mm. Aperture: f/{current_f_stop:.1f}")
 
-        # GSD
+        # --- GSD Calculation ---
         if self.objects_3d:
             obj0 = self.objects_3d[0]
             M0 = obj0.get_model_matrix()
             MV0 = V_view @ M0
             obj0_orig_cam_h = MV0 @ np.array([0, 0, 0, 1])
-            self.obj0_Zc_mm = obj0_orig_cam_h[2] / obj0_orig_cam_h[3] if abs(obj0_orig_cam_h[3]) > 1e-9 else obj0_orig_cam_h[2]
+            # Storing obj0_Zc_mm as an instance variable if your other methods use it (like the screenshot GSD display)
+            self.obj0_Zc_mm = obj0_orig_cam_h[2] / obj0_orig_cam_h[3] if abs(obj0_orig_cam_h[3]) > 1e-9 else \
+            obj0_orig_cam_h[2]
 
-            #TODO: Z offset handling
-            self.obj0_Zc_mm = self.obj0_Zc_mm - self.object_position_offset['z'].get()
+            # Apply Z offset for GSD calculation
+            actual_obj0_Zc_for_gsd = self.obj0_Zc_mm - self.object_position_offset['z'].get()
 
-            if self.obj0_Zc_mm > 0:
+            if actual_obj0_Zc_for_gsd > 0:
                 fx, fy = self.K_intrinsic[0, 0], self.K_intrinsic[1, 1]
-                self.gsdx = self.obj0_Zc_mm / fx if abs(fx) > 1e-6 else float('inf')
-                self.gsdy = self.obj0_Zc_mm / fy if abs(fy) > 1e-6 else float('inf')
-                self.gsd_info_var.set(f"GSD@Obj Zc={self.obj0_Zc_mm:.1f}mm \nX:{self.gsdx:.4f} mm/px \nY:{self.gsdy:.4f} mm/px")
+                gsdx = actual_obj0_Zc_for_gsd / fx if abs(fx) > 1e-6 else float('inf')
+                gsdy = actual_obj0_Zc_for_gsd / fy if abs(fy) > 1e-6 else float('inf')
+                self.gsd_info_var.set(
+                    f"GSD@Obj Zc={actual_obj0_Zc_for_gsd:.1f}mm \nX:{gsdx:.4f} mm/px \nY:{gsdy:.4f} mm/px")
             else:
-                self.gsd_info_var.set(f"GSD: Obj Zc={self.obj0_Zc_mm:.1f}mm (Invalid Zc)")
+                self.gsd_info_var.set(f"GSD: Obj Zc={actual_obj0_Zc_for_gsd:.1f}mm (Invalid Zc)")
         else:
             self.gsd_info_var.set("GSD (mm/px): No object")
 
-        # 2D Surface Projection
+        # --- 2D Surface Projection ---
         if not self.objects_3d:
             if self.image_canvas:
                 self.tk_image = ImageTk.PhotoImage(self.pil_image)
@@ -1029,36 +1026,36 @@ class VirtualCameraSimulator:
             M = obj.get_model_matrix()
             all_v_loc_h = obj.vertices_local
             all_v_world_h = (M @ all_v_loc_h.T).T
-            all_v_cam_h = (V_view @ all_v_world_h.T).T
+            all_v_cam_h = (V_view @ all_v_world_h.T).T  # Vertices in camera space (mm)
             all_v_world = all_v_world_h[:, :3] / np.maximum(all_v_world_h[:, 3, np.newaxis], 1e-9)
 
             if not obj.faces:
                 self.log_debug(f"Obj {obj_i} no faces for 2D surf.")
                 continue
+
             for face_j, face_indices in enumerate(obj.faces):
                 if len(face_indices) < 3: continue
                 face_v_w = [all_v_world[idx] for idx in face_indices]
-                face_v_cam_h = [all_v_cam_h[idx] for idx in face_indices]
+                face_v_cam_h_current_face = [all_v_cam_h[idx] for idx in face_indices]  # Camera coords for this face
 
+                # Back-face Culling
                 v0w, v1w, v2w = face_v_w[0], face_v_w[1], face_v_w[2]
                 norm_w = np.cross(v1w - v0w, v2w - v0w)
                 if np.linalg.norm(norm_w) < 1e-6: continue
                 norm_w /= np.linalg.norm(norm_w)
-
                 center_w = np.mean(np.array(face_v_w), axis=0)
-                view_to_face_w = center_w - cam_p  # Vector from camera eye to face center
+                view_to_face_w = center_w - cam_p
+                if np.dot(norm_w, view_to_face_w) >= -0.01: continue  # Epsilon for grazing
 
-                if np.dot(norm_w,
-                          view_to_face_w) >= 0.0: continue  # Back-face culling (normal points away from camera or parallel)
-
+                # Shading
                 diff_int = max(0, np.dot(norm_w, light_dir_w))
                 intensity = amb + (1 - amb) * diff_int
-                base_rgb = obj.get_face_color_rgb_int(face_j)
-                s_rgb = tuple(min(255, int(c * intensity)) for c in base_rgb)
-                fill_hex = rgb_tuple_to_hex(s_rgb)
+                base_rgb_face = obj.get_face_color_rgb_int(face_j)
+                s_rgb_lit = tuple(min(255, int(c * intensity)) for c in base_rgb_face)
 
-                scr_pts, face_Zc_mm_vals, valid_proj = [], [], True
-                for vch in face_v_cam_h:
+                # Projection and Z-depth for Painter's sort
+                scr_pts, face_Zc_mm_vals_for_face, valid_proj = [], [], True
+                for vch in face_v_cam_h_current_face:
                     Xc, Yc, Zc, Wc = vch
                     if abs(Wc) > 1e-9:
                         Xc /= Wc
@@ -1067,10 +1064,10 @@ class VirtualCameraSimulator:
                     else:
                         valid_proj = False
                         break
-                    face_Zc_mm_vals.append(Zc)
+                    face_Zc_mm_vals_for_face.append(Zc)
                     if Zc <= 0.01:
                         valid_proj = False
-                        break  # Near clip
+                        break
                     uvw_p = self.K_intrinsic @ np.array([Xc, Yc, Zc])
                     if abs(uvw_p[2]) < 1e-6:
                         valid_proj = False
@@ -1078,15 +1075,57 @@ class VirtualCameraSimulator:
                     scr_pts.append((int(round(uvw_p[0] / uvw_p[2])), int(round(uvw_p[1] / uvw_p[2]))))
 
                 if not valid_proj or len(scr_pts) < 3: continue
-                all_faces_2d.append((np.mean(face_Zc_mm_vals), scr_pts, fill_hex, "dimgray"))
+                avg_Zc_mm_face = np.mean(face_Zc_mm_vals_for_face)
 
-        all_faces_2d.sort(key=lambda x: x[0], reverse=True)  # Painter's
+                # --- Apply Depth of Field Effect (Dimming) ---
+                final_face_rgb = list(s_rgb_lit)  # Start with the normally lit color
+
+                if current_f_stop < 22.0:  # Example: Apply DoF effect if aperture is wider than f/22
+                    abs_focal_plane_dist_mm = abs(focal_plane_Zc_mm)
+                    abs_face_z_dist_mm = abs(avg_Zc_mm_face)
+
+                    # How much f-number influences the width of the sharp region.
+                    # Smaller f-stop -> smaller factor -> narrower sharp region.
+                    dof_sharpness_factor = current_f_stop / 16.0  # f/16 as a baseline (factor=1)
+                    dof_sharpness_factor = max(0.05, min(2.5, dof_sharpness_factor))  # Clamp for stability
+
+                    # Sharp depth range (in mm) around the focal plane
+                    sharp_depth_range_mm = abs_focal_plane_dist_mm * 0.10 * dof_sharpness_factor
+                    sharp_depth_range_mm = max(1.0, min(sharp_depth_range_mm,
+                                                        abs_focal_plane_dist_mm * 0.75))  # Min 1mm, max 75% of focal dist
+
+                    depth_diff_from_focal_plane_mm = abs(abs_face_z_dist_mm - abs_focal_plane_dist_mm)
+
+                    if depth_diff_from_focal_plane_mm > sharp_depth_range_mm:
+                        out_of_focus_amount_mm = depth_diff_from_focal_plane_mm - sharp_depth_range_mm
+
+                        # Distance over which dimming transitions to max effect
+                        transition_falloff_distance_mm = (abs_focal_plane_dist_mm * 0.5 + sharp_depth_range_mm) / max(
+                            0.1, dof_sharpness_factor)
+                        transition_falloff_distance_mm = max(2.0, transition_falloff_distance_mm)
+
+                        effect_strength = min(1.0, out_of_focus_amount_mm / transition_falloff_distance_mm)
+
+                        max_dimming_effect = 0.70  # Max 70% reduction in brightness
+                        dim_value = 1.0 - effect_strength * max_dimming_effect
+
+                        final_face_rgb = [min(255, max(0, int(c * dim_value))) for c in s_rgb_lit]
+
+                        # self.log_debug(f"  DoF: FaceZc={avg_Zc_mm_face:.1f}, FocalPlaneZc={focal_plane_Zc_mm:.1f}, "
+                        #                f"SharpRng={sharp_depth_range_mm:.2f}, Diff={depth_diff_from_focal_plane_mm:.2f} -> "
+                        #                f"EffectStr={effect_strength:.2f}, DimVal={dim_value:.2f}")
+
+                fill_hex_final = rgb_tuple_to_hex(tuple(final_face_rgb))
+                # Current outline is None, if you use "dimgray", it won't be affected by DoF dimming
+                all_faces_2d.append((avg_Zc_mm_face, scr_pts, fill_hex_final, None))  # Using None for outline
+
+        all_faces_2d.sort(key=lambda x: x[0], reverse=True)  # Painter's sort
         for _, pts, fill, outl in all_faces_2d:
-            if len(pts) >= 3: self.draw_context.polygon(pts, fill=fill, outline=None, width=1)
+            if len(pts) >= 3: self.draw_context.polygon(pts, fill=fill, outline=outl, width=1)
 
+        # --- Final Update to Tkinter Canvas & 3D View ---
         if self.image_canvas:
             self.tk_image = ImageTk.PhotoImage(self.pil_image)
-            self.image_canvas.create_image(0, 0,
-                                           anchor=tk.NW,
-                                           image=self.tk_image)
+            self.image_canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_image)
         self._update_3d_view()
+        self.log_debug("--- SIMULATION UPDATE END ---")
