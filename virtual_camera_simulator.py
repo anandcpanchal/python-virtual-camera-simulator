@@ -532,15 +532,22 @@ class VirtualCameraSimulator:
         self.physical_params_frame.pack(pady=5, fill=tk.X)
         phys_labels = ["Focal Length (mm):", "Pixel Width (µm):", "Pixel Height (µm):"]
         phys_vars = [self.focal_length_mm_var, self.pixel_width_micron_var, self.pixel_height_micron_var]
-        phys_defaults = [16.0, 3.45, 3.45]
+        phys_defaults = [8.0, 1.6, 1.6]
         phys_configs = [(1.0, 500.0, 1.0), (0.1, 50.0, 0.01), (0.1, 50.0, 0.01)]
+
+        # Custom styling to indicate primitive variables
+        imp_spinbox_style = ttk.Style()
+        imp_spinbox_style.configure("Important.TSpinbox",
+                        foreground="red",  # Text color
+                        padding=5)
+
         for i, label_text in enumerate(phys_labels):
             rf = ttk.Frame(self.physical_params_frame)
             rf.pack(fill=tk.X, padx=5, pady=1)
             ttk.Label(rf, text=label_text, width=18, anchor='w').pack(side=tk.LEFT)
             if phys_vars[i].get() == 0.0 and phys_defaults[i] != 0.0: phys_vars[i].set(phys_defaults[i])
             ttk.Spinbox(rf, from_=phys_configs[i][0], to=phys_configs[i][1], increment=phys_configs[i][2],
-                        textvariable=phys_vars[i], width=10, command=self._physical_params_changed).pack(side=tk.LEFT,
+                        textvariable=phys_vars[i], width=10, command=self._physical_params_changed, style='Important.TSpinbox').pack(side=tk.LEFT,
                                                                                                          expand=True,
                                                                                                          fill=tk.X)
         self.intr_f = ttk.LabelFrame(cam_param_f, text="Intrinsic Matrix K (Calculated or Direct)")
