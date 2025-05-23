@@ -11,6 +11,7 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk # Add NavigationToolbar2Tk
 import datetime
 
+
 # --- Main Simulator Class ---
 class VirtualCameraSimulator:
     # __init__ and other methods will go here
@@ -61,10 +62,27 @@ class VirtualCameraSimulator:
         # Note: _create_default_object will be called later or needs self.obj_transform_vars
 
         self.canvas_width, self.canvas_height = 640, 360
-        fx_init, fy_init = self.canvas_width * 1.2, self.canvas_height * 1.2
-        cx_init, cy_init = self.canvas_width / 2.0, self.canvas_height / 2.0
-        self.K_intrinsic = create_intrinsic_matrix(fx=fx_init, fy=fy_init, cx=cx_init, cy=cy_init)
+        # Initial K_intrinsic values (fx, fy in PIXELS; cx, cy in PIXELS)
+        # These will be the defaults if "Direct K" mode is chosen, or calculated if "Physical" mode is chosen.
+        self.fx_direct_val = tk.DoubleVar(value=self.canvas_width * 1.2)
+        self.fy_direct_val = tk.DoubleVar(value=self.canvas_height * 1.2)
+        self.cx_val = tk.DoubleVar(value=self.canvas_width / 2.0)
+        self.cy_val = tk.DoubleVar(value=self.canvas_height / 2.0)
+        self.s_val = tk.DoubleVar(value=0.0)
+
+        self.K_intrinsic = create_intrinsic_matrix(
+            fx=self.fx_direct_val.get(), fy=self.fy_direct_val.get(),
+            cx=self.cx_val.get(), cy=self.cy_val.get(), s=self.s_val.get()
+        )
         self.aperture = tk.DoubleVar(value=5.6)
+
+        # --- New Physical Camera Parameters ---
+        self.focal_length_mm_var = tk.DoubleVar(value=16.0)  # e.g., 16mm lens
+        self.pixel_width_micron_var = tk.DoubleVar(value=3.45)  # e.g., 3.45 µm pixels
+        self.pixel_height_micron_var = tk.DoubleVar(value=3.45)
+
+        # --- Mode for Intrinsic Input ---
+        self.intrinsic_input_mode_var = tk.StringVar(value="physical_params")  # Default to physical params
 
         self.camera_pos_vars = {'x': tk.DoubleVar(value=0.0), 'y': tk.DoubleVar(value=0.0),
                                 'z': tk.DoubleVar(value=100.0)}
@@ -74,7 +92,7 @@ class VirtualCameraSimulator:
         self.camera_transform_configs = {'x': (-200, 200, 1), 'y': (-200, 200, 1), 'z': (1, 1000, 1),
                                          'rx': (-360, 360, 1), 'ry': (-360, 360, 1), 'rz': (-360, 360, 1)}
 
-        self.object_position_offset = {'z': tk.DoubleVar(value=0.0)} # This was in your __init__, keep if used
+        self.object_position_offset = {'z': tk.DoubleVar(value=0.0)}  # This was in your __init__, keep if used
 
         self.last_mouse_x, self.last_mouse_y, self.dragging_mode, self.active_object_for_drag = 0, 0, None, None
         self.debug_mode_var = tk.BooleanVar(value=False)
@@ -117,8 +135,8 @@ class VirtualCameraSimulator:
         self.obj_dims_var = tk.StringVar(value="Obj Dims (mm): N/A")
         self.pixel_coord_var = tk.StringVar(value="Cursor (px): (N/A)")
         self.measure_2d_status_var = tk.StringVar(value="2D Measure: OFF")
-        self.measure_2d_x_measurement_var = tk.StringVar(value="X Measure: OFF") # Kept from your code
-        self.measure_2d_y_measurement_var = tk.StringVar(value="Y Measure: OFF") # Kept from your code
+        self.measure_2d_x_measurement_var = tk.StringVar(value="X Measure: OFF")  # Kept from your code
+        self.measure_2d_y_measurement_var = tk.StringVar(value="Y Measure: OFF")  # Kept from your code
         self.gsd_info_var = tk.StringVar(value="GSD (mm/px): N/A")
 
         # 2D Measurement State
@@ -149,7 +167,113 @@ class VirtualCameraSimulator:
 
         self._setup_gui()
         if self.objects_3d: self._display_object_dimensions(self.objects_3d[0])
+        self._on_intrinsic_mode_change()  # Call once to set initial state of K fields
         self.update_simulation()
+
+    def _physical_params_changed(self, event=None):  # Called by physical param spinboxes
+        if self.intrinsic_input_mode_var.get() == "physical_params":
+            self._calculate_fx_fy_from_physical()
+            self.update_simulation()  # Update K_intrinsic and then the full simulation
+
+    def _calculate_fx_fy_from_physical(self):
+        """Calculates fx, fy from physical parameters and updates K_intrinsic and UI."""
+        try:
+            f_mm = self.focal_length_mm_var.get()
+            pw_um = self.pixel_width_micron_var.get()
+            ph_um = self.pixel_height_micron_var.get()
+
+            if pw_um <= 0 or ph_um <= 0:
+                self.log_debug("Pixel width/height must be positive.")
+                # Optionally show error to user or revert fx, fy display
+                return False
+
+            pw_mm = pw_um / 1000.0
+            ph_mm = ph_um / 1000.0
+
+            fx_calc = f_mm / pw_mm
+            fy_calc = f_mm / ph_mm
+
+            self.K_intrinsic[0, 0] = fx_calc
+            self.K_intrinsic[1, 1] = fy_calc
+
+            # Update the StringVars tied to the K matrix Entry fields for fx and fy
+            if "k_00" in self.k_entry_vars: self.k_entry_vars["k_00"].set(f"{fx_calc:.3f}")
+            if "k_11" in self.k_entry_vars: self.k_entry_vars["k_11"].set(f"{fy_calc:.3f}")
+
+            self.log_debug(f"Calculated K from physical: fx={fx_calc:.3f}, fy={fy_calc:.3f}")
+            return True
+        except tk.TclError:  # If spinbox values are invalid during get()
+            self.log_debug("Invalid physical parameter input.")
+            return False
+        except ZeroDivisionError:
+            self.log_debug("Error: Pixel width or height is zero during K calculation.")
+            return False
+
+    def _update_K_from_direct_entry(self, k_key):
+        """Updates K_intrinsic from direct entry if in 'K_direct' mode."""
+        if self.intrinsic_input_mode_var.get() != "K_direct":
+            # If in physical mode, re-assert calculated values if user tries to edit fx/fy
+            if k_key in ["k_00", "k_11"]:
+                self._calculate_fx_fy_from_physical()  # This will rewrite the entry
+            return
+
+        if k_key not in self.k_entry_vars or k_key not in self.k_entries:
+            return
+
+        try:
+            val_str = self.k_entry_vars[k_key].get()
+            val_float = float(val_str)
+
+            # Determine r, c from k_key (e.g., "k_00" -> r=0, c=0)
+            r, c = int(k_key[2]), int(k_key[3])
+
+            self.K_intrinsic[r, c] = val_float
+            self.log_debug(f"K_intrinsic directly updated: K[{r},{c}] = {val_float}")
+
+            # If fx or fy were changed directly, physical params become 'N/A' or outdated
+            if k_key == "k_00" or k_key == "k_11":
+                self.focal_length_mm_var.set(0)  # Or some indicator of N/A
+                self.pixel_width_micron_var.set(0)
+                self.pixel_height_micron_var.set(0)
+                # Or disable physical params entries via _on_intrinsic_mode_change
+                self.log_debug("Direct fx/fy edit; physical params are now out of sync/N/A.")
+
+            self.update_simulation()
+        except ValueError:
+            self.log_debug(f"Invalid direct input for K entry {k_key}: '{val_str}'")
+            # Revert entry to current K_intrinsic value if parsing fails
+            r, c = int(k_key[2]), int(k_key[3])
+            self.k_entry_vars[k_key].set(f"{self.K_intrinsic[r, c]:.3f}")
+
+    def _on_intrinsic_mode_change(self, event=None):
+        """Handles UI changes when intrinsic input mode is switched."""
+        mode = self.intrinsic_input_mode_var.get()
+        is_physical_mode = (mode == "physical_params")
+
+        # Toggle state of physical parameter spinboxes
+        for child in self.physical_params_frame.winfo_children():  # Iterate through row_frames
+            for spinbox_or_label in child.winfo_children():  # Iterate through label and spinbox
+                if isinstance(spinbox_or_label, ttk.Spinbox):
+                    spinbox_or_label.config(state=tk.NORMAL if is_physical_mode else tk.DISABLED)
+
+        # Toggle state of fx, fy entries in K matrix
+        if "k_00" in self.k_entries: self.k_entries["k_00"].config(state=tk.DISABLED if is_physical_mode else tk.NORMAL)
+        if "k_11" in self.k_entries: self.k_entries["k_11"].config(state=tk.DISABLED if is_physical_mode else tk.NORMAL)
+
+        if is_physical_mode:
+            self.log_debug("Switched to Physical Parameters mode for K.")
+            self._calculate_fx_fy_from_physical()  # Calculate and display fx, fy
+        else:  # K_direct mode
+            self.log_debug("Switched to Direct K Matrix Input mode.")
+            # User can now edit fx, fy. Update K_intrinsic from current entry values.
+            # This ensures K_intrinsic reflects what's shown in the (now editable) fx, fy entries.
+            try:
+                self.K_intrinsic[0, 0] = float(self.k_entry_vars["k_00"].get())
+                self.K_intrinsic[1, 1] = float(self.k_entry_vars["k_11"].get())
+            except:  # Handle case where entries might not be valid floats yet
+                self.log_debug("Could not parse direct fx/fy on mode switch, K might be stale.")
+
+        self.update_simulation()  # Refresh based on current K
 
     # You will also need the _on_app_content_frame_configure method:
     def _on_app_content_frame_configure(self, event=None):
@@ -368,30 +492,78 @@ class VirtualCameraSimulator:
         return filename
 
     def _setup_gui(self):
-        # Camera Lens Parameters Frame
-        cam_param_f = ttk.LabelFrame(self.controls_frame, text="Camera Lens (K in Pixels)")
-        cam_param_f.pack(pady=5, fill=tk.X)
-        intr_f = ttk.LabelFrame(cam_param_f, text="Intrinsic Matrix K")
-        intr_f.pack(pady=5, padx=5, fill=tk.X)
-        self.k_entries = {}
-        k_labels_texts = [["fx", "s ", "cx"], ["0 ", "fy", "cy"], ["0 ", "0 ", "1 "]]  # Added spaces for alignment
-        for r in range(3):
-            for c in range(3):
-                val, key_txt, key_e = self.K_intrinsic[r, c], k_labels_texts[r][c], f"k_{r}{c}"
-                editable = not (
-                        (r == 1 and c == 0) or (r == 2 and c == 0) or (r == 2 and c == 1) or (r == 2 and c == 2))
-                ttk.Label(intr_f, text=key_txt + (": " if editable else "")).grid(row=r, column=2 * c, padx=(5, 0),
-                                                                                  pady=2, sticky='w')
-                if editable:
-                    e = ttk.Entry(intr_f, width=7)
-                    e.insert(0, str(val))
-                    e.grid(row=r, column=2 * c + 1, padx=(0, 5), pady=2, sticky='ew')
-                    e.bind("<FocusOut>", lambda ev, rr=r, cc=c: self._update_intrinsics_from_gui(rr, cc))
-                    e.bind("<Return>", lambda ev, rr=r, cc=c: self._update_intrinsics_from_gui(rr, cc))
-                    self.k_entries[key_e] = e
-                else:
-                    ttk.Label(intr_f, text=str(round(val, 2))).grid(row=r, column=2 * c + 1, padx=(0, 5), pady=2,
-                                                                    sticky='w')
+        # --- Camera Lens Parameters Frame ---
+        cam_param_f = ttk.LabelFrame(self.controls_frame, text="Camera Lens Parameters")
+        cam_param_f.pack(pady=5, padx=5, fill=tk.X, anchor='n')
+
+        # --- Intrinsic Input Mode Selection ---
+        mode_frame = ttk.LabelFrame(cam_param_f, text="Intrinsic Definition Mode")
+        mode_frame.pack(pady=5, fill=tk.X)
+
+        ttk.Radiobutton(mode_frame, text="Physical Params (f-mm, pixel-µm)", variable=self.intrinsic_input_mode_var,
+                        value="physical_params", command=self._on_intrinsic_mode_change).pack(anchor='w', padx=5)
+        ttk.Radiobutton(mode_frame, text="Direct K Matrix (fx, fy in pixels)", variable=self.intrinsic_input_mode_var,
+                        value="K_direct", command=self._on_intrinsic_mode_change).pack(anchor='w', padx=5)
+
+        # --- Physical Camera Parameters Inputs ---
+        self.physical_params_frame = ttk.LabelFrame(cam_param_f, text="Physical Parameters")
+        self.physical_params_frame.pack(pady=5, fill=tk.X)
+
+        phys_labels = ["Focal Length (mm):", "Pixel Width (µm):", "Pixel Height (µm):"]
+        phys_vars = [self.focal_length_mm_var, self.pixel_width_micron_var, self.pixel_height_micron_var]
+        phys_defaults = [16.0, 3.45, 3.45]  # Corresponding to __init__
+        phys_configs = [(1.0, 200.0, 1.0), (0.1, 20.0, 0.01), (0.1, 20.0, 0.01)]  # (from, to, increment)
+
+        for i, label_text in enumerate(phys_labels):
+            row_frame = ttk.Frame(self.physical_params_frame)
+            row_frame.pack(fill=tk.X, padx=5, pady=1)
+            ttk.Label(row_frame, text=label_text, width=18, anchor='w').pack(side=tk.LEFT)
+            # Ensure DoubleVars have default values if not set by Spinbox init
+            if phys_vars[i].get() == 0.0 and phys_defaults[i] != 0.0:  # Check for default TkDoubleVar value
+                phys_vars[i].set(phys_defaults[i])
+
+            spin = ttk.Spinbox(row_frame, from_=phys_configs[i][0], to=phys_configs[i][1],
+                               increment=phys_configs[i][2], textvariable=phys_vars[i],
+                               width=10, command=self._physical_params_changed)
+            spin.pack(side=tk.LEFT, expand=True, fill=tk.X)
+
+        # --- Intrinsic Matrix K Frame ---
+        self.intr_f = ttk.LabelFrame(cam_param_f,
+                                     text="Intrinsic Matrix K (Calculated or Direct)")  # Renamed intr_f to self.intr_f
+        self.intr_f.pack(pady=5, fill=tk.X)
+        self.k_entries = {}  # Store Entry widgets
+        self.k_entry_vars = {}  # Store StringVars for entries that might be display-only
+
+        k_param_map = {  # (row, col, label_text, tk_variable_for_direct_input, is_always_editable)
+            "k_00": (0, 0, "fx", self.fx_direct_val, True),  # Will be handled by mode
+            "k_01": (0, 1, "s", self.s_val, True),
+            "k_02": (0, 2, "cx", self.cx_val, True),
+            "k_10": (1, 0, "0", None, False),  # Not a tk.Var, just a label
+            "k_11": (1, 1, "fy", self.fy_direct_val, True),  # Will be handled by mode
+            "k_12": (1, 2, "cy", self.cy_val, True),
+            "k_20": (2, 0, "0", None, False),
+            "k_21": (2, 1, "0", None, False),
+            "k_22": (2, 2, "1", None, False)
+        }
+
+        for key, (r, c, label, var, always_editable) in k_param_map.items():
+            is_major_param = key in ["k_00", "k_01", "k_02", "k_11", "k_12"]
+            suffix = ": " if is_major_param and always_editable else (" " if not is_major_param else ": ")
+
+            ttk.Label(self.intr_f, text=label + suffix).grid(row=r, column=2 * c, padx=(5, 0), pady=2, sticky='w')
+
+            if var is not None:  # fx, fy, s, cx, cy
+                entry_var = tk.StringVar(value=str(round(var.get(), 3)))  # Use StringVar for display
+                self.k_entry_vars[key] = entry_var
+                entry = ttk.Entry(self.intr_f, width=8, textvariable=entry_var)
+                entry.grid(row=r, column=2 * c + 1, padx=(0, 5), pady=2, sticky='ew')
+                if always_editable or key in ["k_00", "k_11"]:  # fx, fy are special
+                    entry.bind("<FocusOut>", lambda e, k_bind=key: self._update_K_from_direct_entry(k_bind))
+                    entry.bind("<Return>", lambda e, k_bind=key: self._update_K_from_direct_entry(k_bind))
+                self.k_entries[key] = entry
+            else:  # Read-only '0' or '1'
+                val_to_show = "0.0" if label == "0" else "1.0"
+                ttk.Label(self.intr_f, text=val_to_show).grid(row=r, column=2 * c + 1, padx=(0, 5), pady=2, sticky='w')
 
         ttk.Label(cam_param_f, text="Aperture (f-number):").pack(anchor='w', padx=5)
         ttk.Scale(cam_param_f, from_=1.0, to_=32.0, orient=tk.HORIZONTAL, variable=self.aperture,
@@ -486,11 +658,13 @@ class VirtualCameraSimulator:
 
         # Display Areas
         self.image_frame.pack(side=tk.TOP, padx=0, pady=(0, 5), expand=True, fill="both")  # No X padx for image_frame
-        self.image_canvas = tk.Canvas(self.image_frame, width=self.canvas_width, height=self.canvas_height,bg="lightgrey")
+        self.image_canvas = tk.Canvas(self.image_frame, width=self.canvas_width, height=self.canvas_height,
+                                      bg="lightgrey")
         self.image_canvas.pack(expand=True, fill="both")
 
         ttk.Label(self.image_frame, textvariable=self.pixel_coord_var).pack(side=tk.BOTTOM, fill=tk.X, padx=2, pady=2)
-        save_button = ttk.Button(self.image_frame, text="Save 2D Projection Image", command=self._save_2d_projection_as_image)
+        save_button = ttk.Button(self.image_frame, text="Save 2D Projection Image",
+                                 command=self._save_2d_projection_as_image)
         save_button.pack(pady=5, padx=5, fill=tk.X)
         grid_checkbutton = ttk.Checkbutton(
             self.image_frame,
@@ -533,10 +707,9 @@ class VirtualCameraSimulator:
         toolbar.update()  # Important to initialize the toolbar
 
         try:
-            self.fig_3d.tight_layout() # Prevent labels overlapping
+            self.fig_3d.tight_layout()  # Prevent labels overlapping
         except Exception as e:
             self.log_debug(f"Note: fig_3d.tight_layout() failed: {e}")
-
 
     def _on_debug_toggle(self):
         self.log_debug(f"Debug mode: {self.debug_mode_var.get()}")
@@ -654,7 +827,7 @@ class VirtualCameraSimulator:
         if cone_v.size > 0: all_plot_points.extend(cone_v.tolist())
         for edge in cone_e:
             p1, p2 = cone_v[edge[0]], cone_v[edge[1]]
-            self.ax_3d.plot([p1[0], p2[0]], [p1[1], p2[1]],[p1[2], p2[2]],color='darkorchid', lw=1)
+            self.ax_3d.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], color='darkorchid', lw=1)
 
         # --- 3. Debug Mode Visuals ---
         if self.debug_mode_var.get():
@@ -926,7 +1099,7 @@ class VirtualCameraSimulator:
 
     def update_simulation(self, event=None):
         self.log_debug("--- SIMULATION UPDATE START ---")
-        self.draw_context.rectangle([0, 0, self.canvas_width, self.canvas_height],fill="white")
+        self.draw_context.rectangle([0, 0, self.canvas_width, self.canvas_height], fill="white")
 
         # --- Draw Pixel Grid if Enabled ---
         if self.show_2d_grid_var.get():
@@ -993,7 +1166,7 @@ class VirtualCameraSimulator:
             obj0_orig_cam_h = MV0 @ np.array([0, 0, 0, 1])
             # Storing obj0_Zc_mm as an instance variable if your other methods use it (like the screenshot GSD display)
             self.obj0_Zc_mm = obj0_orig_cam_h[2] / obj0_orig_cam_h[3] if abs(obj0_orig_cam_h[3]) > 1e-9 else \
-            obj0_orig_cam_h[2]
+                obj0_orig_cam_h[2]
 
             # Apply Z offset for GSD calculation
             actual_obj0_Zc_for_gsd = self.obj0_Zc_mm - self.object_position_offset['z'].get()
