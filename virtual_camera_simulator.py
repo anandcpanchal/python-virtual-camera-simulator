@@ -253,9 +253,9 @@ class VirtualCameraSimulator:
 
             # If fx or fy were changed directly, physical params become 'N/A' or outdated
             if k_key == "k_00" or k_key == "k_11":
-                self.focal_length_mm_var.set(0)  # Or some indicator of N/A
-                self.pixel_width_micron_var.set(0)
-                self.pixel_height_micron_var.set(0)
+                self.focal_length_mm_var.set(8)  # Or some indicator of N/A
+                self.pixel_width_micron_var.set(1.6)
+                self.pixel_height_micron_var.set(1.6)
                 # Or disable physical params entries via _on_intrinsic_mode_change
                 self.log_debug("Direct fx/fy edit; physical params are now out of sync/N/A.")
 
