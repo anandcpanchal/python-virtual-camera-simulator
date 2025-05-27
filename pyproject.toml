@@ -18,6 +18,7 @@ dependencies = [
     "pytransform3d==3.14.0",
     "scipy==1.15.3",
     "six==1.17.0",
+    "darkdetect==0.8.0"
 ]
 authors=[
     {name="Anand Panchal", email="anand@robocode51.com"}

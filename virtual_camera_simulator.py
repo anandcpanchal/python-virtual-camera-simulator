@@ -1,5 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, filedialog
+
+import darkdetect
 from PIL import Image, ImageTk, ImageDraw
 from helper import *
 from object_3d import Object3D
@@ -54,7 +56,7 @@ class VirtualCameraSimulator:
         # --- Initialize variables (based on your last provided __init__) ---
         self.objects_3d = []
 
-        self.canvas_width, self.canvas_height = 1440, 1080  # Your values
+        self.canvas_width, self.canvas_height = 1024, 768  # Your values
         fx_init = self.canvas_width * 1.0  # Adjusted for potentially less distortion, or your preference
         fy_init = self.canvas_width * 1.0  # Often fx=fy for square pixels effect, adjust height if aspect different
         cx_init, cy_init = self.canvas_width / 2.0, self.canvas_height / 2.0
@@ -74,7 +76,7 @@ class VirtualCameraSimulator:
                                 'z': tk.DoubleVar(value=100.0)}
         self.camera_rot_vars = {'rx': tk.DoubleVar(value=180.0), 'ry': tk.DoubleVar(value=0.0),
                                 'rz': tk.DoubleVar(value=0.0)}
-        self.camera_transform_configs = {'x': (-500, 500, 1), 'y': (-500, 500, 1), 'z': (1, 2000, 1),
+        self.camera_transform_configs = {'x': (-500, 500, 1), 'y': (-500, 500, 1), 'z': (1, 5000, 1),
                                          'rx': (-360, 360, 1), 'ry': (-360, 360, 1), 'rz': (-360, 360, 1)}
         self.object_position_offset = {'z': tk.DoubleVar(value=0.0)}
         self.last_mouse_x, self.last_mouse_y, self.dragging_mode, self.active_object_for_drag = 0, 0, None, None
@@ -495,7 +497,7 @@ class VirtualCameraSimulator:
         # Custom styling to indicate primitive variables
         imp_spinbox_style = ttk.Style()
         imp_spinbox_style.configure("Important.TSpinbox",
-                        foreground="red",  # Text color
+                        foreground= "orange" if darkdetect.isDark() else 'red',  # Text color
                         padding=5)
 
         for i, label_text in enumerate(phys_labels):
@@ -519,12 +521,13 @@ class VirtualCameraSimulator:
         for key, (r, c, lbl, var, always_edit) in k_map.items():
             is_maj = key in ["k_00", "k_01", "k_02", "k_11", "k_12"]
             suffix = ": " if (is_maj and always_edit) or key in ["k_00", "k_11"] else ("  " if not is_maj else ": ")
-            if lbl == "0" or lbl == "1": suffix = "  "
+            if lbl == "0" or lbl == "1":
+                suffix = "  "
             ttk.Label(self.intr_f, text=lbl + suffix).grid(row=r, column=2 * c, padx=(5, 0), pady=2, sticky='w')
             if var:
                 ev = tk.StringVar(value=f"{var.get():.2f}")
                 self.k_entry_vars[key] = ev
-                e = ttk.Entry(self.intr_f, width=8, textvariable=ev)
+                e = ttk.Entry(self.intr_f, width=8, textvariable=ev, style='Important.TSpinbox' if c==2 else '')
                 e.grid(row=r, column=2 * c + 1, padx=(0, 5), pady=2, sticky='ew')
                 if always_edit or key in ["k_00", "k_11"]:
                     e.bind("<FocusOut>", lambda ev, kb=key: self._update_K_from_direct_entry(kb))
@@ -556,14 +559,14 @@ class VirtualCameraSimulator:
             ttk.Label(pos_frame, text=t).grid(row=i + 1, column=0, sticky='w', pady=1, padx=(0, 2))
             cfg = self.camera_transform_configs[k]
             ttk.Spinbox(pos_frame, from_=cfg[0], to=cfg[1], increment=cfg[2], textvariable=self.camera_pos_vars[k],
-                        width=7, command=self.update_simulation).grid(row=i + 1, column=1, sticky='ew', pady=1)
+                        width=7, command=self.update_simulation, style='Important.TSpinbox').grid(row=i + 1, column=1, sticky='ew', pady=1)
         cam_rot_labs = {'rx': "PitchX°:", 'ry': "YawY°:", 'rz': "RollZ°:"}
         ttk.Label(rot_frame, text="Orientation (deg):").grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
         for i, (k, t) in enumerate(cam_rot_labs.items()):
             ttk.Label(rot_frame, text=t).grid(row=i + 1, column=0, sticky='w', pady=1, padx=(0, 2))
             cfg = self.camera_transform_configs[k]
             ttk.Spinbox(rot_frame, from_=cfg[0], to=cfg[1], increment=cfg[2], textvariable=self.camera_rot_vars[k],
-                        width=7, command=self.update_simulation).grid(row=i + 1, column=1, sticky='ew', pady=1)
+                        width=7, command=self.update_simulation,  style='Important.TSpinbox').grid(row=i + 1, column=1, sticky='ew', pady=1)
 
         # == Object Management Frame == (Parent: column1_frame)
         obj_mgmt_f = ttk.LabelFrame(self.column1_frame, text="Object (Vertices in mm)")  # Using obj_mgmt_f as var
@@ -582,7 +585,7 @@ class VirtualCameraSimulator:
             ttk.Label(obj_tf_f, text=t).grid(row=r_obj, column=c_obj * 2, sticky='w', padx=(5, 0), pady=1)
             cfg = self.transform_configs[k]
             ttk.Spinbox(obj_tf_f, from_=cfg[0], to=cfg[1], increment=cfg[2], textvariable=self.obj_transform_vars[k],
-                        width=6, command=self._update_object_transform).grid(row=r_obj, column=c_obj * 2 + 1,
+                        width=6, command=self._update_object_transform, style='Important.TSpinbox').grid(row=r_obj, column=c_obj * 2 + 1,
                                                                              sticky='ew', padx=(0, 5), pady=1)
             obj_tf_f.grid_columnconfigure(c_obj * 2 + 1, weight=1)
 
