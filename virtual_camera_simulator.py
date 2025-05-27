@@ -54,7 +54,7 @@ class VirtualCameraSimulator:
         # --- Initialize variables (based on your last provided __init__) ---
         self.objects_3d = []
 
-        self.canvas_width, self.canvas_height = 640, 360  # Your values
+        self.canvas_width, self.canvas_height = 1440, 1080  # Your values
         fx_init = self.canvas_width * 1.0  # Adjusted for potentially less distortion, or your preference
         fy_init = self.canvas_width * 1.0  # Often fx=fy for square pixels effect, adjust height if aspect different
         cx_init, cy_init = self.canvas_width / 2.0, self.canvas_height / 2.0
@@ -171,7 +171,6 @@ class VirtualCameraSimulator:
             self.root_canvas.yview_scroll(1, "units")
         elif hasattr(event, 'delta') and event.delta != 0:
             self.root_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
 
     def _scroll_target_canvas(self, event, target_canvas):
         # Helper to prevent trying to scroll if target_canvas is None (e.g. during setup)
@@ -295,48 +294,6 @@ class VirtualCameraSimulator:
                 self.log_debug("Could not parse direct fx/fy on mode switch, K might be stale.")
 
         self.update_simulation()  # Refresh based on current K
-
-    # You will also need the _on_app_content_frame_configure method:
-    def _on_app_content_frame_configure(self, event=None):
-        """Updates the scrollregion of the root_canvas to encompass app_content_frame."""
-        self.root_canvas.configure(scrollregion=self.root_canvas.bbox("all"))
-        # Optional: Make the app_content_frame at least as wide as the canvas if canvas is wider
-        # self.root_canvas.itemconfig("app_content_frame_tag", width=self.root_canvas.winfo_width())
-
-    # And the _on_root_mousewheel method (modified to be more careful about event target):
-    def _on_root_mousewheel(self, event):
-        """Handles mouse wheel scrolling for the root_canvas (main application content)."""
-
-        # Determine the actual widget under the mouse for more precise control
-        # If event.widget is part of the Matplotlib canvas or controls_canvas, let their own handlers work.
-        # This is a simplified check; robustly determining if a child scrollable should take precedence is complex.
-
-        # Check if the event originated from a widget that might have its own scrolling
-        # (like the 3D canvas or the inner controls canvas if it were scrollable)
-        # For now, we assume if Matplotlib is not handling it, root_canvas can.
-        # This might need refinement if Matplotlib's toolbar enables its own scroll zoom.
-
-        current_widget = event.widget
-        while current_widget is not None:
-            if current_widget == self.canvas_3d_agg.get_tk_widget() if self.canvas_3d_agg else False:
-                # self.log_debug("Root scroll: Event over 3D canvas, allowing Matplotlib to handle.")
-                return  # Let Matplotlib's default scroll (if any) take over
-            if current_widget == self.app_content_frame:  # If controls panel had its own scroll
-                # self.log_debug("Root scroll: Event over controls canvas, allowing its scroll.")
-                # return # Let controls_canvas scroll itself if it's independently scrollable
-                pass  # For now, let root scroll even if over controls canvas, as controls are not independently scrollable here.
-            if current_widget == self.root:  # Top-level
-                break
-            current_widget = current_widget.master
-
-        # If we reached here, scroll the root_canvas
-        if event.num == 4:  # Linux scroll up
-            self.root_canvas.yview_scroll(-1, "units")
-        elif event.num == 5:  # Linux scroll down
-            self.root_canvas.yview_scroll(1, "units")
-        elif hasattr(event, 'delta') and event.delta != 0:  # Windows/macOS
-            self.root_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        # return "break" # Usually good to prevent further propagation if handled
 
     # And _bind_mousewheel_recursively if you choose to use it more widely for the root canvas
     # (The version binding to a *specific target_canvas* is needed)
@@ -1117,7 +1074,7 @@ class VirtualCameraSimulator:
 
     def update_simulation(self, event=None):
         self.log_debug("--- SIMULATION UPDATE START ---")
-        self.draw_context.rectangle([0, 0, self.canvas_width, self.canvas_height], fill="white")
+        self.draw_context.rectangle([0, 0, self.canvas_width, self.canvas_height], fill="lightgrey")
 
         # --- Draw Pixel Grid if Enabled ---
         if self.show_2d_grid_var.get():
@@ -1141,8 +1098,7 @@ class VirtualCameraSimulator:
         # --- Camera Setup ---
         cam_p = np.array([self.camera_pos_vars[k].get() for k in ['x', 'y', 'z']])
         cam_r_deg = np.array([self.camera_rot_vars[k].get() for k in ['rx', 'ry', 'rz']])
-        self.log_debug(
-            f"Cam Pos(mm): {cam_p}, Rot(deg): P={cam_r_deg[0]:.1f},Y={cam_r_deg[1]:.1f},R={cam_r_deg[2]:.1f}")
+        self.log_debug(f"Cam Pos(mm): {cam_p}, Rot(deg): P={cam_r_deg[0]:.1f},Y={cam_r_deg[1]:.1f},R={cam_r_deg[2]:.1f}")
 
         Rrz = create_rotation_matrix_z(math.radians(cam_r_deg[2]))
         Rry = create_rotation_matrix_y(math.radians(cam_r_deg[1]))
@@ -1166,13 +1122,12 @@ class VirtualCameraSimulator:
         cam_target_w = cam_p + world_fwd * target_dist_mm
         V_view = create_view_matrix(cam_p, cam_target_w, world_up)
         self.current_V_view_for_3d_plot = V_view
-        self.log_debug(f"K (px):\n{self.K_intrinsic}")
-        self.log_debug(f"V_view (mm to cam_mm):\n{V_view}")
+        self.log_debug(f"SIMULATOR K_INTRINSIC being used for projection:\n{self.K_intrinsic}")  # CRITICAL DEBUG
+        self.log_debug(f"V_view (world_mm to cam_mm):\n{V_view}")
 
         target_h_dof = np.append(cam_target_w, 1.0)
         focal_pt_cam_h = V_view @ target_h_dof
-        focal_plane_Zc_mm = focal_pt_cam_h[2] / focal_pt_cam_h[3] if abs(focal_pt_cam_h[3]) > 1e-9 else focal_pt_cam_h[
-            2]
+        focal_plane_Zc_mm = focal_pt_cam_h[2] / focal_pt_cam_h[3] if abs(focal_pt_cam_h[3]) > 1e-9 else focal_pt_cam_h[2]
         current_f_stop = self.aperture.get()  # Renamed from f_stop for clarity
         self.log_debug(f"FocalPlane Zc: {focal_plane_Zc_mm:.2f}mm. Aperture: f/{current_f_stop:.1f}")
 
@@ -1210,111 +1165,117 @@ class VirtualCameraSimulator:
 
         light_dir_w = np.array([0.6, 0.7, 1.0])
         light_dir_w /= np.linalg.norm(light_dir_w)
-        amb = 0.35
+        amb = 0.9
         all_faces_2d = []
 
         for obj_i, obj in enumerate(self.objects_3d):
+            self.log_debug(f"--- Processing Object {obj_i} for 2D Projection ---")
             M = obj.get_model_matrix()
+            self.log_debug(f"  Obj {obj_i} Model Matrix M:\n{M}")
             all_v_loc_h = obj.vertices_local
+            self.log_debug(f"  Obj {obj_i} First 3 Local Vertices (Homogeneous, mm):\n{all_v_loc_h[:3]}")
+
             all_v_world_h = (M @ all_v_loc_h.T).T
-            all_v_cam_h = (V_view @ all_v_world_h.T).T  # Vertices in camera space (mm)
+            self.log_debug(f"  Obj {obj_i} First 3 World Vertices (Homogeneous, mm):\n{all_v_world_h[:3]}")
+
+            all_v_cam_h = (V_view @ all_v_world_h.T).T
+            self.log_debug(f"  Obj {obj_i} First 3 Camera Vertices (Homogeneous, mm):\n{all_v_cam_h[:3]}")
+
             all_v_world = all_v_world_h[:, :3] / np.maximum(all_v_world_h[:, 3, np.newaxis], 1e-9)
 
             if not obj.faces:
-                self.log_debug(f"Obj {obj_i} no faces for 2D surf.")
+                self.log_debug(f"  Obj {obj_i} no faces for 2D surf.")
                 continue
 
             for face_j, face_indices in enumerate(obj.faces):
-                if len(face_indices) < 3: continue
-                face_v_w = [all_v_world[idx] for idx in face_indices]
-                face_v_cam_h_current_face = [all_v_cam_h[idx] for idx in face_indices]  # Camera coords for this face
+                if len(face_indices) < 3:
+                    continue
+                self.log_debug(f"  Processing Obj {obj_i}, Face {face_j}, Indices: {face_indices}")
 
-                # Back-face Culling
+                face_v_w = [all_v_world[idx] for idx in face_indices]
+                face_v_cam_h_current_face = [all_v_cam_h[idx] for idx in face_indices]
+
                 v0w, v1w, v2w = face_v_w[0], face_v_w[1], face_v_w[2]
                 norm_w = np.cross(v1w - v0w, v2w - v0w)
-                if np.linalg.norm(norm_w) < 1e-6: continue
+                if np.linalg.norm(norm_w) < 1e-6:
+                    self.log_debug("Degenerate face normal.")
+                    continue
                 norm_w /= np.linalg.norm(norm_w)
                 center_w = np.mean(np.array(face_v_w), axis=0)
                 view_to_face_w = center_w - cam_p
-                if np.dot(norm_w, view_to_face_w) >= -0.01: continue  # Epsilon for grazing
+                dot_prod_cull = np.dot(norm_w, view_to_face_w)
+                if dot_prod_cull >= -0.01:  # Back-face culling
+                    self.log_debug(
+                        f"    Face {face_j} culled. Normal_w: {norm_w}, ViewToFace_w: {view_to_face_w}, Dot: {dot_prod_cull:.3f}")
+                    continue
 
-                # Shading
-                diff_int = max(0, np.dot(norm_w, light_dir_w))
+                diff_int = max(0, np.dot(norm_w, light_dir_w));
                 intensity = amb + (1 - amb) * diff_int
-                base_rgb_face = obj.get_face_color_rgb_int(face_j)
-                s_rgb_lit = tuple(min(255, int(c * intensity)) for c in base_rgb_face)
+                base_rgb = obj.get_face_color_rgb_int(face_j)
+                s_rgb_lit = tuple(min(255, int(c * intensity)) for c in base_rgb)
 
-                # Projection and Z-depth for Painter's sort
                 scr_pts, face_Zc_mm_vals_for_face, valid_proj = [], [], True
-                for vch in face_v_cam_h_current_face:
+                self.log_debug(f"    Projecting Face {face_j} vertices:")
+                for vert_idx_in_face, vch in enumerate(face_v_cam_h_current_face):
                     Xc, Yc, Zc, Wc = vch
+                    self.log_debug(
+                        f"      Vert {vert_idx_in_face} CamCoords_H (mm): Xc={Xc:.2f} Yc={Yc:.2f} Zc={Zc:.2f} Wc={Wc:.2f}")
                     if abs(Wc) > 1e-9:
-                        Xc /= Wc
-                        Yc /= Wc
-                        Zc /= Wc
+                        Xc /= Wc;Yc /= Wc;Zc /= Wc
                     else:
-                        valid_proj = False
-                        break
+                        valid_proj = False; self.log_debug("        Wc too small, invalid projection."); break
                     face_Zc_mm_vals_for_face.append(Zc)
-                    if Zc <= 0.01:
-                        valid_proj = False
-                        break
+                    self.log_debug(
+                        f"      Vert {vert_idx_in_face} CamCoords_NonH (mm): Xc={Xc:.2f} Yc={Yc:.2f} Zc={Zc:.2f}")
+
+                    if Zc <= 0.01: valid_proj = False; self.log_debug("        Zc <= 0.01 (near clip)."); break
+
                     uvw_p = self.K_intrinsic @ np.array([Xc, Yc, Zc])
-                    if abs(uvw_p[2]) < 1e-6:
-                        valid_proj = False
-                        break
-                    scr_pts.append((int(round(uvw_p[0] / uvw_p[2])), int(round(uvw_p[1] / uvw_p[2]))))
+                    w_prime_mm = uvw_p[2]  # This is Zc_mm if K[2,2]=1
+                    self.log_debug(
+                        f"      Vert {vert_idx_in_face} K @ [Xc,Yc,Zc] = uvw_prime: {uvw_p}, w_prime_mm (Zc): {w_prime_mm:.2f}")
 
-                if not valid_proj or len(scr_pts) < 3: continue
+                    if abs(w_prime_mm) < 1e-6: valid_proj = False; self.log_debug(
+                        "        w_prime_mm (Zc from K) too small."); break
+
+                    u_px, v_px = uvw_p[0] / w_prime_mm, uvw_p[1] / w_prime_mm
+                    self.log_debug(
+                        f"      Vert {vert_idx_in_face} Projected Screen Coords (px): u={u_px:.2f}, v={v_px:.2f}")
+                    scr_pts.append((int(round(u_px)), int(round(v_px))))
+
+                if not valid_proj or len(scr_pts) < 3: self.log_debug(
+                    f"    Face {face_j} projection failed or not enough points."); continue
                 avg_Zc_mm_face = np.mean(face_Zc_mm_vals_for_face)
+                self.log_debug(f"    Face {face_j} avg_Zc_mm: {avg_Zc_mm_face:.2f}")
 
-                # --- Apply Depth of Field Effect (Dimming) ---
-                final_face_rgb = list(s_rgb_lit)  # Start with the normally lit color
-
-                if current_f_stop < 22.0:  # Example: Apply DoF effect if aperture is wider than f/22
+                final_face_rgb = list(s_rgb_lit)
+                if current_f_stop < 22.0:
                     abs_focal_plane_dist_mm = abs(focal_plane_Zc_mm)
                     abs_face_z_dist_mm = abs(avg_Zc_mm_face)
-
-                    # How much f-number influences the width of the sharp region.
-                    # Smaller f-stop -> smaller factor -> narrower sharp region.
-                    dof_sharpness_factor = current_f_stop / 16.0  # f/16 as a baseline (factor=1)
-                    dof_sharpness_factor = max(0.05, min(2.5, dof_sharpness_factor))  # Clamp for stability
-
-                    # Sharp depth range (in mm) around the focal plane
+                    dof_sharpness_factor = max(0.05, min(2.5, current_f_stop / 16.0))
                     sharp_depth_range_mm = abs_focal_plane_dist_mm * 0.10 * dof_sharpness_factor
-                    sharp_depth_range_mm = max(1.0, min(sharp_depth_range_mm,
-                                                        abs_focal_plane_dist_mm * 0.75))  # Min 1mm, max 75% of focal dist
-
-                    depth_diff_from_focal_plane_mm = abs(abs_face_z_dist_mm - abs_focal_plane_dist_mm)
-
-                    if depth_diff_from_focal_plane_mm > sharp_depth_range_mm:
-                        out_of_focus_amount_mm = depth_diff_from_focal_plane_mm - sharp_depth_range_mm
-
-                        # Distance over which dimming transitions to max effect
-                        transition_falloff_distance_mm = (abs_focal_plane_dist_mm * 0.5 + sharp_depth_range_mm) / max(
-                            0.1, dof_sharpness_factor)
-                        transition_falloff_distance_mm = max(2.0, transition_falloff_distance_mm)
-
-                        effect_strength = min(1.0, out_of_focus_amount_mm / transition_falloff_distance_mm)
-
-                        max_dimming_effect = 0.70  # Max 70% reduction in brightness
-                        dim_value = 1.0 - effect_strength * max_dimming_effect
-
-                        final_face_rgb = [min(255, max(0, int(c * dim_value))) for c in s_rgb_lit]
-
-                        # self.log_debug(f"  DoF: FaceZc={avg_Zc_mm_face:.1f}, FocalPlaneZc={focal_plane_Zc_mm:.1f}, "
-                        #                f"SharpRng={sharp_depth_range_mm:.2f}, Diff={depth_diff_from_focal_plane_mm:.2f} -> "
-                        #                f"EffectStr={effect_strength:.2f}, DimVal={dim_value:.2f}")
+                    sharp_depth_range_mm = max(1.0, min(sharp_depth_range_mm, abs_focal_plane_dist_mm * 0.75))
+                    depth_diff_mm = abs(abs_face_z_dist_mm - abs_focal_plane_dist_mm)
+                    if depth_diff_mm > sharp_depth_range_mm:
+                        oof_mm = depth_diff_mm - sharp_depth_range_mm
+                        trans_dist_mm = (abs_focal_plane_dist_mm * 0.5 + sharp_depth_range_mm) / max(0.1,
+                                                                                                     dof_sharpness_factor)
+                        trans_dist_mm = max(2.0, trans_dist_mm)
+                        eff_str = min(1.0, oof_mm / trans_dist_mm)
+                        dim_val = 1.0 - eff_str * 0.70
+                        final_face_rgb = [min(255, max(0, int(c * dim_val))) for c in s_rgb_lit]
+                        self.log_debug(
+                            f"    DoF Applied to Face {face_j}: EffectStr={eff_str:.2f}, DimVal={dim_val:.2f}")
 
                 fill_hex_final = rgb_tuple_to_hex(tuple(final_face_rgb))
-                # Current outline is None, if you use "dimgray", it won't be affected by DoF dimming
-                all_faces_2d.append((avg_Zc_mm_face, scr_pts, fill_hex_final, None))  # Using None for outline
+                all_faces_2d.append((avg_Zc_mm_face, scr_pts, fill_hex_final, None))  # Outline is None
 
-        all_faces_2d.sort(key=lambda x: x[0], reverse=True)  # Painter's sort
-        for _, pts, fill, outl in all_faces_2d:
-            if len(pts) >= 3: self.draw_context.polygon(pts, fill=fill, outline=outl, width=1)
+        all_faces_2d.sort(key=lambda x: x[0], reverse=True)
+        for avg_Zc, pts, fill, outl in all_faces_2d:
+            if len(pts) >= 3:
+                self.log_debug(f"  Drawing 2D polygon: AvgZc={avg_Zc:.2f}, Pts={pts}, Fill={fill}")
+                self.draw_context.polygon(pts, fill=fill, outline=outl, width=1)
 
-        # --- Final Update to Tkinter Canvas & 3D View ---
         if self.image_canvas:
             self.tk_image = ImageTk.PhotoImage(self.pil_image)
             self.image_canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_image)
