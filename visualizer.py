@@ -179,9 +179,9 @@ def main():
     st.set_page_config(layout="wide")
     st.title("📷 Camera Calibration Visualizer")
 
-    st.sidebar.header("Input Folder")
+    st.header("Input Folder")
     default_path = ""
-    folder_path = st.sidebar.text_input("Path to calibration folder:", default_path)
+    folder_path = st.text_input("Path to calibration folder:", default_path)
 
     if folder_path and os.path.isdir(folder_path):
         input_xml_path = os.path.join(folder_path, "input.xml")
@@ -202,13 +202,13 @@ def main():
                 "Failed to load or parse `calib_camera.yml`. Cannot proceed. Please check the file and console for specific errors from the YAML parser.")
             return
 
-        st.sidebar.header("Image Selection")
+        st.header("Image Selection")
         selected_image_index = None
         if not image_paths:
-            st.sidebar.info("No images listed in input.xml to select for per-view data.")
+            st.info("No images listed in input.xml to select for per-view data.")
         else:
             image_basenames = [os.path.basename(p) for p in image_paths]
-            selected_image_index = st.sidebar.selectbox(
+            selected_image_index = st.selectbox(
                 "Choose an image to view:",
                 range(len(image_basenames)),
                 format_func=lambda x: f"{x}: {image_basenames[x]}"
@@ -217,7 +217,7 @@ def main():
         if selected_image_index is not None and image_paths:
             current_image_path = image_paths[selected_image_index]
             current_image_basename = os.path.basename(current_image_path)
-            st.header(f"Displaying: {current_image_basename}")
+            st.text(f"Displaying: {current_image_basename}")
             col1, col2 = st.columns(2)
         else:
             st.header("General Calibration Data")
@@ -225,7 +225,7 @@ def main():
 
         with col1:
             if selected_image_index is not None and image_paths:
-                st.subheader("Calibrated Image")
+                st.subheader("Input Image")
                 if os.path.exists(current_image_path):
                     try:
                         image_cv = cv2.imread(current_image_path)
@@ -248,7 +248,7 @@ def main():
                             elif "image_points" not in calib_data:
                                 caption = current_image_basename + " (image_points data not found in YML)"
 
-                            st.image(image_display, caption=caption, use_column_width=True)
+                            st.image(image_display, caption=caption, use_container_width=True)
 
                     except Exception as e:
                         st.error(f"Error loading or processing image {current_image_path}: {e}")
