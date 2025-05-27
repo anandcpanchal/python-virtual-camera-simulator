@@ -6,6 +6,7 @@ import cv2
 from PIL import Image
 import os
 import pandas as pd
+from scipy.spatial.transform import Rotation as R_scipy
 
 
 # --- YAML Custom Constructor for OpenCV Matrices ---
@@ -58,13 +59,11 @@ def opencv_matrix_constructor(loader, node):
             return np.zeros((rows, cols), dtype=np_dtype)
 
     # If numpy_array was successfully created, then get its size.
-    # This line is moved here to ensure num_elements_in_data is always defined before the next try block.
     num_elements_in_data = numpy_array.size
 
     # Reshape the array
     try:
         if dt == '2f':
-            # num_elements_in_data is now defined
             if rows > 0 and num_elements_in_data > 0 and num_elements_in_data % (rows * 2) == 0:
                 num_points_per_row = num_elements_in_data // (rows * 2)
                 return numpy_array.reshape(rows, num_points_per_row, 2)
@@ -78,12 +77,10 @@ def opencv_matrix_constructor(loader, node):
                 )
                 return np.zeros((rows, 0, 2), dtype=np_dtype)
         else:
-            # num_elements_in_data is now defined
-            # For other data types (not '2f'), assume 'cols' is the direct number of columns.
             if num_elements_in_data == rows * cols:
                 return numpy_array.reshape(rows, cols)
             elif num_elements_in_data == 0 and rows >= 0:
-                return np.zeros((rows, cols), dtype=np_dtype)  # Return a correctly shaped zero array
+                return np.zeros((rows, cols), dtype=np_dtype)
             else:
                 st.error(
                     f"Error reshaping matrix (dt='{dt}'). Data size {num_elements_in_data} "
@@ -110,15 +107,23 @@ def parse_input_xml(xml_file_path):
     try:
         tree = ET.parse(xml_file_path)
         root = tree.getroot()
-        image_paths = root.find('images').text.strip().split('\n')
-        # Filter out any empty strings that might result from split
-        image_paths = [path for path in image_paths if path.strip()]
-        return image_paths
+        image_paths_text = root.find('images').text
+        if image_paths_text:
+            image_paths = image_paths_text.strip().split('\n')
+            # Filter out any empty strings that might result from split
+            image_paths = [path for path in image_paths if path.strip()]
+            return image_paths
+        else:
+            st.warning(f"No image paths found within the <images> tag in {xml_file_path}.")
+            return []
     except ET.ParseError as e:
         st.error(f"Error parsing XML file {xml_file_path}: {e}")
         return []
     except FileNotFoundError:
         st.error(f"XML file not found: {xml_file_path}")
+        return []
+    except AttributeError:  # Handles case where 'images' tag or its text is None
+        st.error(f"Error parsing XML: 'images' tag not found or is empty in {xml_file_path}.")
         return []
 
 
@@ -149,7 +154,7 @@ def load_and_parse_calib_yml(yml_file_path):
         st.error(
             f"Error parsing YAML file {yml_file_path} (after text processing): {e}\nContent snippet: {processed_content[:500]}")
         return None
-    except Exception as e:  # Catching the UnboundLocalError here if it originates from constructor
+    except Exception as e:
         st.error(f"An unexpected error occurred while loading/parsing YAML {yml_file_path}: {e}")
         return None
 
@@ -174,14 +179,40 @@ def draw_points_on_image(image_cv, points_array, color=(0, 255, 0), radius=5, th
     return drawn_image
 
 
+def get_euler_angles(rvec):
+    """Converts a rotation vector to Euler angles (yaw, pitch, roll) in degrees."""
+    try:
+        # Convert rotation vector to rotation matrix
+        R_mat, _ = cv2.Rodrigues(rvec)
+        # Create a Rotation object from the rotation matrix
+        r = R_scipy.from_matrix(R_mat)
+        # Get Euler angles in ZYX order (yaw, pitch, roll) in degrees
+        # OpenCV's standard is often R = Rz * Ry * Rx for camera pose.
+        # Scipy's 'zyx' corresponds to yaw (Z), pitch (Y), roll (X).
+        # Ensure the sequence matches your definition of yaw, pitch, roll.
+        # Common sequence for camera extrinsics might be 'YXZ' or 'ZYX'
+        # Let's assume a common 'ZYX' (yaw, pitch, roll) sequence for world-to-camera or camera-to-world.
+        # Adjust if your convention is different.
+        euler_angles = r.as_euler('zyx', degrees=True)
+        return euler_angles  # [yaw, pitch, roll]
+    except Exception as e:
+        st.warning(f"Could not convert rotation vector to Euler angles: {e}")
+        return [None, None, None]
+
+
 # --- Main Streamlit Application ---
 def main():
     st.set_page_config(layout="wide")
     st.title("📷 Camera Calibration Visualizer")
 
-    st.header("Input Folder")
+    # --- 1. Input Section ---
+    st.header("1. Input Settings")
     default_path = ""
-    folder_path = st.text_input("Path to calibration folder:", default_path)
+    folder_path = st.text_input("1.1 Path to calibration folder:", default_path)
+
+    selected_image_index = None  # Initialize
+    image_paths = []
+    calib_data = None
 
     if folder_path and os.path.isdir(folder_path):
         input_xml_path = os.path.join(folder_path, "input.xml")
@@ -197,166 +228,222 @@ def main():
         image_paths = parse_input_xml(input_xml_path)
         calib_data = load_and_parse_calib_yml(calib_yml_path)
 
-        if not calib_data:  # This check is crucial
+        if not calib_data:
             st.error(
                 "Failed to load or parse `calib_camera.yml`. Cannot proceed. Please check the file and console for specific errors from the YAML parser.")
             return
 
-        st.header("Image Selection")
-        selected_image_index = None
         if not image_paths:
-            st.info("No images listed in input.xml to select for per-view data.")
+            st.info(
+                "No images listed in input.xml to select for per-view data. Displaying general calibration parameters if available.")
         else:
             image_basenames = [os.path.basename(p) for p in image_paths]
             selected_image_index = st.selectbox(
-                "Choose an image to view:",
+                "1.2 Choose an image to view:",
                 range(len(image_basenames)),
                 format_func=lambda x: f"{x}: {image_basenames[x]}"
             )
+    elif folder_path:  # Input is given but not a valid directory
+        st.error("The entered path is not a valid directory. Please check the path and try again.")
+        return  # Stop further execution if path is invalid
+    else:  # No folder path entered yet
+        st.info("👋 Welcome! Please enter the path to your camera calibration folder above to begin.")
+        return  # Stop further execution until path is provided
 
-        if selected_image_index is not None and image_paths:
+    st.markdown("---")
+
+    # --- 2. Image with Markings (Full Width) ---
+    # Make this section collapsible
+    image_expander_label = "2. Image View and Statistics"
+    if selected_image_index is not None and image_paths:
+        current_image_basename = os.path.basename(image_paths[selected_image_index])
+        image_expander_label = f"2. Image: {current_image_basename} & Statistics"
+
+        with st.expander(image_expander_label, expanded=True):
             current_image_path = image_paths[selected_image_index]
-            current_image_basename = os.path.basename(current_image_path)
-            st.text(f"Displaying: {current_image_basename}")
-            col1, col2 = st.columns(2)
-        else:
-            st.header("General Calibration Data")
-            col1, col2 = st, st
+            if os.path.exists(current_image_path):
+                try:
+                    image_cv = cv2.imread(current_image_path)
+                    if image_cv is None:
+                        st.error(f"Could not load image: {current_image_path}. Check path and file integrity.")
+                    else:
+                        image_points_for_view = None
+                        if "image_points" in calib_data and \
+                                isinstance(calib_data.get("image_points"), np.ndarray) and \
+                                calib_data["image_points"].ndim == 3 and \
+                                selected_image_index < calib_data["image_points"].shape[0]:
+                            image_points_for_view = calib_data["image_points"][selected_image_index]
 
-        with col1:
-            if selected_image_index is not None and image_paths:
-                st.subheader("Input Image")
-                if os.path.exists(current_image_path):
-                    try:
-                        image_cv = cv2.imread(current_image_path)
-                        if image_cv is None:
-                            st.error(f"Could not load image: {current_image_path}. Check path and file integrity.")
-                        else:
-                            image_points_for_view = None
-                            if "image_points" in calib_data and \
-                                    isinstance(calib_data.get("image_points"), np.ndarray) and \
-                                    calib_data["image_points"].ndim == 3 and \
-                                    selected_image_index < calib_data["image_points"].shape[0]:
-                                image_points_for_view = calib_data["image_points"][selected_image_index]
-
-                            image_cv_with_points = draw_points_on_image(image_cv, image_points_for_view,
-                                                                        color=(0, 255, 0))
-                            image_display = cv2.cvtColor(image_cv_with_points, cv2.COLOR_BGR2RGB)
-                            caption = f"{current_image_basename} (detected points in green)"
-                            if image_points_for_view is None and "image_points" in calib_data:
-                                caption = current_image_basename + " (no valid points to draw for this view)"
-                            elif "image_points" not in calib_data:
-                                caption = current_image_basename + " (image_points data not found in YML)"
-
-                            st.image(image_display, caption=caption, use_container_width=True)
-
-                    except Exception as e:
-                        st.error(f"Error loading or processing image {current_image_path}: {e}")
+                        image_cv_with_points = draw_points_on_image(image_cv, image_points_for_view, color=(0, 255, 0))
+                        image_display = cv2.cvtColor(image_cv_with_points, cv2.COLOR_BGR2RGB)
+                        caption = f"{current_image_basename} (detected points in green)"
+                        if image_points_for_view is None and "image_points" in calib_data:
+                            caption = current_image_basename + " (no valid points to draw for this view)"
+                        elif "image_points" not in calib_data:
+                            caption = current_image_basename + " (image_points data not found in YML)"
+                        st.image(image_display, caption=caption, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error loading or processing image {current_image_path}: {e}")
+            else:
+                st.error(f"Image file not found: {current_image_path}")
+                xml_dir = os.path.dirname(input_xml_path)
+                relative_image_path = os.path.join(xml_dir, os.path.basename(current_image_path))
+                if os.path.exists(relative_image_path):
+                    st.info(
+                        f"Attempting to load image from relative path: {relative_image_path} as absolute path failed. Consider using relative paths in input.xml or ensure absolute paths are correct.")
                 else:
-                    st.error(f"Image file not found: {current_image_path}")
-                    xml_dir = os.path.dirname(input_xml_path)
-                    relative_image_path = os.path.join(xml_dir, os.path.basename(current_image_path))
-                    if os.path.exists(relative_image_path):
-                        st.info(
-                            f"Found image at relative path: {relative_image_path}. Consider using relative paths in input.xml or ensure absolute paths are correct.")
-            elif not image_paths and calib_data:
-                st.info("No images listed in input.xml. Displaying general calibration parameters only.")
+                    st.error(f"Also tried relative path {relative_image_path}, but image not found.")
 
-        with col2:
-            st.subheader("Calibration Data Details")
+        # --- 2.1 Calibration Statistics Grid ---
+        st.subheader("2.1 Calibration Statistics")
+        stats_cols = st.columns(3)  # Create 5 columns for the stats
+        with stats_cols[0]:
+            st.metric("Image Width", f"{calib_data.get('image_width', 'N/A')}")
+            st.metric("Image Height", f"{calib_data.get('image_height', 'N/A')}")
+        with stats_cols[1]:
+            st.metric("Frames (XML)", f"{len(image_paths) if image_paths else 'N/A'}")
+            st.metric("Frames (YML)", f"{calib_data.get('nframes', 'N/A')}")
+        avg_err_val = None
+        if "avg_reprojection_error" in calib_data:
+            avg_err = calib_data['avg_reprojection_error']
+            avg_err_val = avg_err.item() if isinstance(avg_err, np.ndarray) and avg_err.size == 1 else (
+                avg_err if isinstance(avg_err, (float, int)) else None)
+        with stats_cols[2]:
+            st.metric("Avg. Reproj. Error", f"{avg_err_val:.4f} px" if avg_err_val is not None else "N/A")
 
-            st.markdown("##### Intrinsic Parameters (K, D)")
+            # Per-view reprojection error for the selected image
+            err_view_val = None
+            if "per_view_reprojection_errors" in calib_data and \
+                    isinstance(calib_data.get("per_view_reprojection_errors"), np.ndarray) and \
+                    selected_image_index < calib_data["per_view_reprojection_errors"].shape[0]:
+                err_view_arr = calib_data["per_view_reprojection_errors"][selected_image_index]
+                err_view_val = err_view_arr.item() if isinstance(err_view_arr, np.ndarray) and err_view_arr.size == 1 else (
+                    err_view_arr if isinstance(err_view_arr, (float, int)) else None)
+
+            # Display per-view error if available, can be in a new row or added to the grid if space allows
+            if err_view_val is not None:
+                st.metric(f"Reproj. Error (View {selected_image_index + 1})", f"{err_view_val:.4f} px")
+            else:
+                st.text(f"Reproj. Error (View {selected_image_index + 1}): N/A")
+
+    elif not image_paths and calib_data:  # No images in XML, but YML data exists
+        st.header("General Calibration Data (No Image Selected)")
+        # Display general stats if no image is selected but calib_data is available
+        st.subheader("2.1 Calibration Statistics")
+        stats_cols = st.columns(3)
+        with stats_cols[0]:
+            st.metric("Image Width", f"{calib_data.get('image_width', 'N/A')}")
+        with stats_cols[1]:
+            st.metric("Image Height", f"{calib_data.get('image_height', 'N/A')}")
+        with stats_cols[2]:
+            st.metric("Frames (YML)", f"{calib_data.get('nframes', 'N/A')}")
+        avg_err_val = None
+        if "avg_reprojection_error" in calib_data:
+            avg_err = calib_data['avg_reprojection_error']
+            avg_err_val = avg_err.item() if isinstance(avg_err, np.ndarray) and avg_err.size == 1 else (
+                avg_err if isinstance(avg_err, (float, int)) else None)
+        st.metric("Avg. Reproj. Error", f"{avg_err_val:.4f} px" if avg_err_val is not None else "N/A")
+
+    st.markdown("---")
+
+    # --- 3. Camera Intrinsic Parameters ---
+    if calib_data:  # Only proceed if calib_data was loaded
+        st.header("3. Camera Intrinsic Parameters")
+        col3_1, col3_2 = st.columns(2)
+        with col3_1:
+            st.markdown("##### Camera Matrix (K)")
             if "camera_matrix" in calib_data and isinstance(calib_data.get("camera_matrix"), np.ndarray):
-                st.text("Camera Matrix (K):")
                 st.dataframe(pd.DataFrame(calib_data["camera_matrix"]))
             else:
-                st.text("Camera Matrix (K): Not available or invalid format.")
-
+                st.text("Not available or invalid format.")
+        with col3_2:
+            st.markdown("##### Distortion Coefficients (D)")
             if "distortion_coefficients" in calib_data and isinstance(calib_data.get("distortion_coefficients"),
                                                                       np.ndarray):
-                st.text("Distortion Coefficients (D):")
                 st.dataframe(pd.DataFrame(calib_data["distortion_coefficients"]))
             else:
-                st.text("Distortion Coefficients (D): Not available or invalid format.")
+                st.text("Not available or invalid format.")
 
-            if selected_image_index is not None and image_paths:
-                st.markdown(f"##### Extrinsic Parameters (View {selected_image_index + 1})")
-                if "extrinsic_parameters" in calib_data and \
-                        isinstance(calib_data.get("extrinsic_parameters"), np.ndarray) and \
-                        selected_image_index < calib_data["extrinsic_parameters"].shape[0]:
-                    extrinsics_for_view = calib_data["extrinsic_parameters"][selected_image_index]
-                    if extrinsics_for_view.ndim == 1 and extrinsics_for_view.shape[0] == 6:
-                        rvec, tvec = extrinsics_for_view[:3], extrinsics_for_view[3:]
-                        st.text("Rotation Vector (rvec):");
-                        st.code(f"{rvec}")
-                        st.text("Translation Vector (tvec):");
-                        st.code(f"{tvec}")
-                        try:
-                            R, _ = cv2.Rodrigues(rvec)
-                            st.text("Rotation Matrix (R):");
-                            st.dataframe(pd.DataFrame(R))
-                        except Exception as e:
-                            st.warning(f"Could not convert rvec to R: {e}")
-                    else:
-                        st.warning(
-                            f"Extrinsics for view {selected_image_index + 1} have unexpected shape: {extrinsics_for_view.shape}. Expected 1D array of 6 elements.")
+        # --- 4. Camera Extrinsic Parameters ---
+        if selected_image_index is not None and image_paths:  # Extrinsics are per-view
+            st.header(f"4. Camera Extrinsic Parameters (View {selected_image_index + 1})")
+            col4_1, col4_2 = st.columns(2)
+            rvec, tvec, R_mat = None, None, None  # Initialize
+
+            if "extrinsic_parameters" in calib_data and \
+                    isinstance(calib_data.get("extrinsic_parameters"), np.ndarray) and \
+                    selected_image_index < calib_data["extrinsic_parameters"].shape[0]:
+                extrinsics_for_view = calib_data["extrinsic_parameters"][selected_image_index]
+                if extrinsics_for_view.ndim == 1 and extrinsics_for_view.shape[0] == 6:
+                    rvec, tvec = extrinsics_for_view[:3], extrinsics_for_view[3:]
+                    try:
+                        R_mat, _ = cv2.Rodrigues(rvec)
+                    except Exception as e:
+                        st.warning(f"Could not convert rvec to Rotation Matrix: {e}")
                 else:
-                    st.warning(f"Extrinsics not available/valid for view {selected_image_index + 1}.")
+                    st.warning(
+                        f"Extrinsics for view {selected_image_index + 1} have unexpected shape: {extrinsics_for_view.shape}. Expected 1D array of 6 elements.")
+            else:
+                st.warning(f"Extrinsics not available/valid for view {selected_image_index + 1}.")
 
-            st.markdown("##### Calibration Statistics")
-            if "image_width" in calib_data and "image_height" in calib_data:
-                st.text(
-                    f"Calibrated Image Size: {calib_data.get('image_width', 'N/A')}x{calib_data.get('image_height', 'N/A')}")
-            if "nframes" in calib_data: st.text(f"Number of frames in YML: {calib_data.get('nframes', 'N/A')}")
-            if image_paths: st.text(f"Number of images in XML: {len(image_paths)}")
-
-            if "avg_reprojection_error" in calib_data:
-                avg_err = calib_data['avg_reprojection_error']
-                avg_err_val = avg_err.item() if isinstance(avg_err, np.ndarray) and avg_err.size == 1 else (
-                    avg_err if isinstance(avg_err, (float, int)) else None)
-                if avg_err_val is not None:
-                    st.metric("Avg. Reprojection Error:", f"{avg_err_val:.4f} pixels")
+            with col4_1:
+                st.markdown("##### Translation Vector (tvec)")
+                if tvec is not None:
+                    st.code(f"{tvec}")
                 else:
-                    st.text(f"Avg. Reprojection Error: {avg_err} (could not parse as scalar)")
+                    st.text("Not available.")
 
-            if selected_image_index is not None and image_paths:
-                if "per_view_reprojection_errors" in calib_data and \
-                        isinstance(calib_data.get("per_view_reprojection_errors"), np.ndarray) and \
-                        selected_image_index < calib_data["per_view_reprojection_errors"].shape[0]:
-                    err_view_arr = calib_data["per_view_reprojection_errors"][selected_image_index]
-                    err_view = err_view_arr.item() if isinstance(err_view_arr,
-                                                                 np.ndarray) and err_view_arr.size == 1 else (
-                        err_view_arr if isinstance(err_view_arr, (float, int)) else None)
+            with col4_2:
+                st.markdown("##### Rotation Matrix (R)")
+                if R_mat is not None:
+                    st.markdown("###### Rotation Vector (rvec - Rodrigues form)")
+                    st.code(f"{rvec}")
+                    st.markdown("###### Rotation Vector (R_mat - Matrix form)")
+                    st.dataframe(pd.DataFrame(R_mat))
 
-                    if err_view is not None:
-                        st.metric(f"Reprojection Error (View {selected_image_index + 1}):", f"{err_view:.4f} pixels")
+                    yaw, pitch, roll = get_euler_angles(rvec)
+                    st.markdown("###### Euler Angles (Yaw, Pitch, Roll - degrees)")
+
+                    col1, col2, col3 = st.columns(3)
+                    if yaw is not None:  # Check if conversion was successful
+                        col1.text(f"Roll (X): {roll + 180:.2f}°")  # 180 degree offset
+                        col2.text(f"Pitch (Y): {pitch:.2f}°")
+                        col3.text(f"Yaw (Z): {yaw:.2f}°")
                     else:
-                        st.text(
-                            f"Per-view Error (View {selected_image_index + 1}): {err_view_arr} (unexpected format or size)")
+                        st.text("Euler angles could not be computed.")
                 else:
-                    st.warning(f"Per-view error not available/valid for view {selected_image_index + 1}.")
+                    st.text("Not available.")
+        st.markdown("---")
 
-                if "image_points" in calib_data and \
-                        isinstance(calib_data.get("image_points"), np.ndarray) and \
-                        calib_data["image_points"].ndim == 3 and \
-                        selected_image_index < calib_data["image_points"].shape[0]:
-                    image_points_for_view = calib_data["image_points"][selected_image_index]
-                    st.markdown(f"##### Detected Image Points (View {selected_image_index + 1})")
-                    if image_points_for_view.ndim == 2 and image_points_for_view.shape[1] == 2:
-                        st.dataframe(pd.DataFrame(image_points_for_view, columns=['x', 'y']))
-                    else:
-                        st.warning(
-                            f"Image points for view {selected_image_index + 1} have unexpected shape: {image_points_for_view.shape}")
-
+        # --- 5. Points Data ---
+        st.header("5. Points Data")
+        col5_1, col5_2 = st.columns(2)
+        with col5_1:
+            st.markdown("##### 5.1 3D Object Points (Grid Points from YML)")
             if "grid_points" in calib_data and isinstance(calib_data.get("grid_points"), np.ndarray):
-                st.markdown("##### 3D Object Points (Grid Points from YML)")
-                st.text(f"Shape: {calib_data['grid_points'].shape}")
+                # st.text(f"Shape: {calib_data['grid_points'].shape}")
                 st.dataframe(pd.DataFrame(calib_data["grid_points"], columns=['X', 'Y', 'Z']))
+            else:
+                st.text("Not available or invalid format.")
 
-    elif folder_path:
-        st.error("The entered path is not a valid directory. Please check and try again.")
-    else:
-        st.info("👋 Welcome! Please enter the path to your camera calibration folder in the sidebar to begin.")
+        with col5_2:
+            st.markdown(
+                f"##### 5.2 Detected Image Points (View {selected_image_index + 1 if selected_image_index is not None else 'N/A'})")
+            if selected_image_index is not None and image_paths and \
+                    "image_points" in calib_data and \
+                    isinstance(calib_data.get("image_points"), np.ndarray) and \
+                    calib_data["image_points"].ndim == 3 and \
+                    selected_image_index < calib_data["image_points"].shape[0]:
+                image_points_for_view = calib_data["image_points"][selected_image_index]
+                if image_points_for_view.ndim == 2 and image_points_for_view.shape[1] == 2:
+                    st.dataframe(pd.DataFrame(image_points_for_view, columns=['x', 'y']))
+                else:
+                    st.warning(
+                        f"Image points for view {selected_image_index + 1} have unexpected shape: {image_points_for_view.shape}")
+            elif selected_image_index is None:
+                st.text("No image selected to display detected points.")
+            else:
+                st.text("Not available or invalid format for this view.")
 
 
 if __name__ == '__main__':
