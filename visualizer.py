@@ -7,6 +7,7 @@ from PIL import Image
 import os
 import pandas as pd
 from scipy.spatial.transform import Rotation as R_scipy
+import plotly.graph_objects as go  # For interactive 3D plotting
 
 
 # --- YAML Custom Constructor for OpenCV Matrices ---
@@ -186,18 +187,171 @@ def get_euler_angles(rvec):
         R_mat, _ = cv2.Rodrigues(rvec)
         # Create a Rotation object from the rotation matrix
         r = R_scipy.from_matrix(R_mat)
-        # Get Euler angles in ZYX order (yaw, pitch, roll) in degrees
-        # OpenCV's standard is often R = Rz * Ry * Rx for camera pose.
-        # Scipy's 'zyx' corresponds to yaw (Z), pitch (Y), roll (X).
-        # Ensure the sequence matches your definition of yaw, pitch, roll.
-        # Common sequence for camera extrinsics might be 'YXZ' or 'ZYX'
-        # Let's assume a common 'ZYX' (yaw, pitch, roll) sequence for world-to-camera or camera-to-world.
-        # Adjust if your convention is different.
         euler_angles = r.as_euler('zyx', degrees=True)
         return euler_angles  # [yaw, pitch, roll]
     except Exception as e:
         st.warning(f"Could not convert rotation vector to Euler angles: {e}")
         return [None, None, None]
+
+
+def plot_camera_pose_3d_plotly(rvec, tvec, K_matrix=None, target_size=0.2):
+    """
+    Plots the camera pose and a representation of the calibration target in an interactive 3D Plotly plot.
+    rvec: Rotation vector (camera orientation relative to world)
+    tvec: Translation vector (camera position relative to world)
+    K_matrix: Optional camera intrinsic matrix (for frustum scaling)
+    target_size: Size of the calibration target cube at the world origin.
+    Returns the Plotly figure object.
+    """
+    if rvec is None or tvec is None:
+        st.warning("Rotation or translation vector is None, cannot plot camera pose.")
+        fig = go.Figure()
+        fig.update_layout(title="Pose data not available",
+                          scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z'))
+        return fig
+
+    try:
+        R_world_to_cam, _ = cv2.Rodrigues(rvec)  # Rotation from World to Camera
+        t_world_to_cam = tvec.reshape(3, 1)  # Translation from World to Camera
+    except Exception as e:
+        st.warning(f"Error converting rvec to R_mat for plotting: {e}")
+        fig = go.Figure()
+        fig.update_layout(title="Error in pose data", scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z'))
+        return fig
+
+    # To get camera pose in World coordinates (position and orientation of camera frame in world frame):
+    # R_cam_in_world = R_world_to_cam.T
+    # t_cam_in_world = -R_world_to_cam.T @ t_world_to_cam
+    R_cam_in_world = R_world_to_cam.T
+    cam_center_world = (-R_world_to_cam.T @ t_world_to_cam).reshape(3)
+
+    # Camera axes in world coordinates (columns of R_cam_in_world)
+    cam_x_axis_world = R_cam_in_world[:, 0]
+    cam_y_axis_world = R_cam_in_world[:, 1]
+    cam_z_axis_world = R_cam_in_world[:, 2]  # Viewing direction
+
+    # Frustum scaling factor
+    f_scale = 0.5  # Default frustum scale
+    if K_matrix is not None and K_matrix.shape == (3, 3):
+        fx = K_matrix[0, 0]
+        fy = K_matrix[1, 1]
+        # Heuristic scaling based on average focal length, normalized
+        # The division factor (e.g., 2000.0) is arbitrary and might need tuning
+        # depending on the typical scale of your tvec components.
+        # We want f_scale to be a reasonable visual size relative to the scene.
+        avg_focal_length = (fx + fy) / 2.0
+        # If tvec components are large (e.g., camera is far), frustum should be larger.
+        # If tvec components are small (camera is close), frustum should be smaller.
+        # Let's try to scale f_scale based on the magnitude of the camera center distance.
+        dist_to_origin = np.linalg.norm(cam_center_world)
+        if dist_to_origin > 1e-3:  # Avoid division by zero or very small number
+            f_scale = dist_to_origin * 0.1  # Frustum depth is 10% of distance to origin
+        else:
+            f_scale = 0.1  # Default small frustum if camera is at origin
+        f_scale = max(0.05, min(f_scale, 1.0))  # Clamp to reasonable visual size
+
+    frustum_scale_x = 0.5 * f_scale
+    frustum_scale_y = 0.4 * f_scale
+    frustum_depth = 1.0 * f_scale
+
+    frustum_pts_cam = np.array([
+        [0, 0, 0],
+        [-frustum_scale_x, -frustum_scale_y, frustum_depth],
+        [frustum_scale_x, -frustum_scale_y, frustum_depth],
+        [frustum_scale_x, frustum_scale_y, frustum_depth],
+        [-frustum_scale_x, frustum_scale_y, frustum_depth]
+    ])
+
+    # Transform frustum points from camera frame to world frame
+    frustum_pts_world = (R_cam_in_world @ frustum_pts_cam.T).T + cam_center_world
+
+    fig_data = []
+    axis_len_world = max(0.5, target_size * 20)  # Make world axes visible relative to target
+
+    # 1. World Axes (Xw, Yw, Zw at origin)
+    fig_data.append(
+        go.Scatter3d(x=[0, axis_len_world], y=[0, 0], z=[0, 0], mode='lines', line=dict(color='magenta', width=4),
+                     name='World X (Xw)'))
+    fig_data.append(
+        go.Scatter3d(x=[0, 0], y=[0, axis_len_world], z=[0, 0], mode='lines', line=dict(color='cyan', width=4),
+                     name='World Y (Yw)'))
+    fig_data.append(
+        go.Scatter3d(x=[0, 0], y=[0, 0], z=[0, axis_len_world], mode='lines', line=dict(color='yellow', width=4),
+                     name='World Z (Zw)'))
+
+    # 2. Calibration Target Representation (Cube at World Origin)
+    s = target_size / 5.0
+    cube_corners = np.array([
+        [-s, -s, -s], [s, -s, -s], [s, s, -s], [-s, s, -s],  # bottom face
+        [-s, -s, s], [s, -s, s], [s, s, s], [-s, s, s]  # top face
+    ])
+    fig_data.append(go.Mesh3d(
+        x=cube_corners[:, 0], y=cube_corners[:, 1], z=cube_corners[:, 2],
+        i=[0, 0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 4, 4, 5, 6, 7],  # Indices for faces
+        j=[1, 3, 4, 2, 2, 5, 6, 3, 6, 7, 4, 5, 7, 6, 7, 0],
+        k=[2, 7, 5, 6, 5, 2, 4, 7, 3, 5, 0, 6, 0, 1, 2, 3],
+        opacity=0.6, color='dodgerblue', name='Target', showlegend=True
+    ))
+
+    # 3. Camera Center
+    fig_data.append(
+        go.Scatter3d(x=[cam_center_world[0]], y=[cam_center_world[1]], z=[cam_center_world[2]], mode='markers',
+                     marker=dict(color='black', size=1, symbol='diamond'), name='Cam Center (Xc,Yc,Zc Origin)'))
+
+    # 4. Camera Axes (Xc, Yc, Zc)
+    cam_axis_plot_len = f_scale * 100  # Length of plotted camera axes
+    fig_data.append(go.Scatter3d(x=[cam_center_world[0], cam_center_world[0] + cam_axis_plot_len * cam_x_axis_world[0]],
+                                 y=[cam_center_world[1], cam_center_world[1] + cam_axis_plot_len * cam_x_axis_world[1]],
+                                 z=[cam_center_world[2], cam_center_world[2] + cam_axis_plot_len * cam_x_axis_world[2]],
+                                 mode='lines', line=dict(color='red', width=5), name='Cam X (Xc)'))
+    fig_data.append(go.Scatter3d(x=[cam_center_world[0], cam_center_world[0] + cam_axis_plot_len * cam_y_axis_world[0]],
+                                 y=[cam_center_world[1], cam_center_world[1] + cam_axis_plot_len * cam_y_axis_world[1]],
+                                 z=[cam_center_world[2], cam_center_world[2] + cam_axis_plot_len * cam_y_axis_world[2]],
+                                 mode='lines', line=dict(color='green', width=5), name='Cam Y (Yc)'))
+    fig_data.append(go.Scatter3d(x=[cam_center_world[0], cam_center_world[0] + cam_axis_plot_len * cam_z_axis_world[0]],
+                                 y=[cam_center_world[1], cam_center_world[1] + cam_axis_plot_len * cam_z_axis_world[1]],
+                                 z=[cam_center_world[2], cam_center_world[2] + cam_axis_plot_len * cam_z_axis_world[2]],
+                                 mode='lines', line=dict(color='blue', width=5), name='Cam Z (Zc - View)'))
+
+    # 5. Camera Frustum (lines from camera center to target corners for simplicity, or actual frustum)
+    # For simplicity, let's draw lines from camera center to target cube corners
+    # This is more like "lines of sight" to the target corners than a true FOV frustum.
+    for corner_idx in range(cube_corners.shape[0]):
+        fig_data.append(go.Scatter3d(
+            x=[cam_center_world[0], cube_corners[corner_idx, 0]],
+            y=[cam_center_world[1], cube_corners[corner_idx, 1]],
+            z=[cam_center_world[2], cube_corners[corner_idx, 2]],
+            mode='lines', line=dict(color='rgba(128,0,128,0.3)', width=1, dash='dot'), showlegend=False
+        ))
+
+    fig = go.Figure(data=fig_data)
+
+    # Set plot layout - make sure all elements are visible
+    all_plot_pts = np.vstack([
+        np.array([[0, 0, 0], [axis_len_world, 0, 0], [0, axis_len_world, 0], [0, 0, axis_len_world]]),
+        cam_center_world.reshape(1, 3),
+        frustum_pts_world,  # Using the actual frustum points for bounds
+        cube_corners
+    ])
+
+    min_vals = np.min(all_plot_pts, axis=0)
+    max_vals = np.max(all_plot_pts, axis=0)
+    scene_center = (min_vals + max_vals) / 2.0
+    scene_range = np.max(max_vals - min_vals) * 0.6  # Add some padding
+
+    fig.update_layout(
+        title='Interactive Camera and Target Pose',
+        scene=dict(
+            xaxis=dict(title='World X (mm)', range=[scene_center[0] - scene_range, scene_center[0] + scene_range]),
+            yaxis=dict(title='World Y (mm)', range=[scene_center[1] - scene_range, scene_center[1] + scene_range]),
+            zaxis=dict(title='World Z (mm)', range=[scene_center[2] - scene_range, scene_center[2] + scene_range]),
+            aspectmode='cube',  # Enforce cubic aspect ratio
+            camera_eye=dict(x=1.25, y=1.25, z=1.25)
+        ),
+        margin=dict(l=10, r=10, b=10, t=50),
+        legend=dict(orientation="v", yanchor="top", y=0.95, xanchor="left", x=0.01)
+    )
+    return fig
 
 
 # --- Main Streamlit Application ---
@@ -296,13 +450,14 @@ def main():
 
         # --- 2.1 Calibration Statistics Grid ---
         st.subheader("2.1 Calibration Statistics")
-        stats_cols = st.columns(3)  # Create 5 columns for the stats
+        stats_cols = st.columns(3)
         with stats_cols[0]:
             st.metric("Image Width", f"{calib_data.get('image_width', 'N/A')}")
             st.metric("Image Height", f"{calib_data.get('image_height', 'N/A')}")
         with stats_cols[1]:
             st.metric("Frames (XML)", f"{len(image_paths) if image_paths else 'N/A'}")
             st.metric("Frames (YML)", f"{calib_data.get('nframes', 'N/A')}")
+
         avg_err_val = None
         if "avg_reprojection_error" in calib_data:
             avg_err = calib_data['avg_reprojection_error']
@@ -311,24 +466,24 @@ def main():
         with stats_cols[2]:
             st.metric("Avg. Reproj. Error", f"{avg_err_val:.4f} px" if avg_err_val is not None else "N/A")
 
-            # Per-view reprojection error for the selected image
             err_view_val = None
             if "per_view_reprojection_errors" in calib_data and \
                     isinstance(calib_data.get("per_view_reprojection_errors"), np.ndarray) and \
+                    selected_image_index is not None and \
                     selected_image_index < calib_data["per_view_reprojection_errors"].shape[0]:
                 err_view_arr = calib_data["per_view_reprojection_errors"][selected_image_index]
-                err_view_val = err_view_arr.item() if isinstance(err_view_arr, np.ndarray) and err_view_arr.size == 1 else (
+                err_view_val = err_view_arr.item() if isinstance(err_view_arr,
+                                                                 np.ndarray) and err_view_arr.size == 1 else (
                     err_view_arr if isinstance(err_view_arr, (float, int)) else None)
 
-            # Display per-view error if available, can be in a new row or added to the grid if space allows
             if err_view_val is not None:
                 st.metric(f"Reproj. Error (View {selected_image_index + 1})", f"{err_view_val:.4f} px")
-            else:
+            elif selected_image_index is not None:
                 st.text(f"Reproj. Error (View {selected_image_index + 1}): N/A")
 
-    elif not image_paths and calib_data:  # No images in XML, but YML data exists
+
+    elif not image_paths and calib_data:
         st.header("General Calibration Data (No Image Selected)")
-        # Display general stats if no image is selected but calib_data is available
         st.subheader("2.1 Calibration Statistics")
         stats_cols = st.columns(3)
         with stats_cols[0]:
@@ -343,11 +498,13 @@ def main():
             avg_err_val = avg_err.item() if isinstance(avg_err, np.ndarray) and avg_err.size == 1 else (
                 avg_err if isinstance(avg_err, (float, int)) else None)
         st.metric("Avg. Reproj. Error", f"{avg_err_val:.4f} px" if avg_err_val is not None else "N/A")
+    elif not calib_data and folder_path:
+        pass
 
     st.markdown("---")
 
     # --- 3. Camera Intrinsic Parameters ---
-    if calib_data:  # Only proceed if calib_data was loaded
+    if calib_data:
         st.header("3. Camera Intrinsic Parameters")
         col3_1, col3_2 = st.columns(2)
         with col3_1:
@@ -365,10 +522,12 @@ def main():
                 st.text("Not available or invalid format.")
 
         # --- 4. Camera Extrinsic Parameters ---
-        if selected_image_index is not None and image_paths:  # Extrinsics are per-view
+        if selected_image_index is not None and image_paths:
             st.header(f"4. Camera Extrinsic Parameters (View {selected_image_index + 1})")
-            col4_1, col4_2 = st.columns(2)
+
             rvec, tvec, R_mat = None, None, None  # Initialize
+            K_intrinsic_matrix = calib_data.get("camera_matrix") if isinstance(calib_data.get("camera_matrix"),
+                                                                               np.ndarray) else None
 
             if "extrinsic_parameters" in calib_data and \
                     isinstance(calib_data.get("extrinsic_parameters"), np.ndarray) and \
@@ -386,33 +545,58 @@ def main():
             else:
                 st.warning(f"Extrinsics not available/valid for view {selected_image_index + 1}.")
 
-            with col4_1:
+            # Layout for text data and plot
+            col4_text, col4_plot = st.columns([1, 1.2])  # Give a bit more space to plot
+
+            with col4_text:
                 st.markdown("##### Translation Vector (tvec)")
                 if tvec is not None:
                     st.code(f"{tvec}")
                 else:
                     st.text("Not available.")
 
-            with col4_2:
-                st.markdown("##### Rotation Matrix (R)")
-                if R_mat is not None:
+                st.markdown("##### Rotation")
+                if R_mat is not None and rvec is not None:
                     st.markdown("###### Rotation Vector (rvec - Rodrigues form)")
                     st.code(f"{rvec}")
-                    st.markdown("###### Rotation Vector (R_mat - Matrix form)")
+                    st.markdown("###### Rotation Matrix (R_mat - Matrix form)")
                     st.dataframe(pd.DataFrame(R_mat))
 
                     yaw, pitch, roll = get_euler_angles(rvec)
-                    st.markdown("###### Euler Angles (Yaw, Pitch, Roll - degrees)")
+                    st.markdown("###### Euler Angles (degrees)")
 
-                    col1, col2, col3 = st.columns(3)
-                    if yaw is not None:  # Check if conversion was successful
-                        col1.text(f"Roll (X): {roll + 180:.2f}°")  # 180 degree offset
-                        col2.text(f"Pitch (Y): {pitch:.2f}°")
-                        col3.text(f"Yaw (Z): {yaw:.2f}°")
+                    euler_col1, euler_col2, euler_col3 = st.columns(3)
+                    if yaw is not None and pitch is not None and roll is not None:
+                        euler_col1.text(f"Roll (X): {roll + 180:.2f}°")
+                        euler_col2.text(f"Pitch (Y): {pitch:.2f}°")
+                        euler_col3.text(f"Yaw (Z): {yaw:.2f}°")
                     else:
                         st.text("Euler angles could not be computed.")
                 else:
-                    st.text("Not available.")
+                    st.text("Rotation data not available.")
+
+            with col4_plot:
+                st.markdown("##### Camera Pose Visualization")
+                if rvec is not None and tvec is not None:
+                    try:
+                        # Use a default target size, can be made configurable later
+                        target_cube_size = 0.2
+                        if 'grid_points' in calib_data and isinstance(calib_data.get('grid_points'), np.ndarray) and \
+                                calib_data['grid_points'].size > 0:
+                            # Estimate target size from grid points if available
+                            # This is a rough estimation, assuming grid points are somewhat centered around origin
+                            max_coords = np.max(np.abs(calib_data['grid_points']), axis=0)
+                            target_cube_size = np.max(max_coords) * 0.1  # Scale down for visualization
+                            target_cube_size = max(0.05, target_cube_size)  # Ensure a minimum size
+
+                        pose_fig = plot_camera_pose_3d_plotly(rvec, tvec, K_intrinsic_matrix,
+                                                              target_size=target_cube_size)
+                        st.plotly_chart(pose_fig, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Error plotting camera pose with Plotly: {e}")
+                else:
+                    st.text("Not enough data to plot camera pose.")
+
         st.markdown("---")
 
         # --- 5. Points Data ---
@@ -421,7 +605,6 @@ def main():
         with col5_1:
             st.markdown("##### 5.1 3D Object Points (Grid Points from YML)")
             if "grid_points" in calib_data and isinstance(calib_data.get("grid_points"), np.ndarray):
-                # st.text(f"Shape: {calib_data['grid_points'].shape}")
                 st.dataframe(pd.DataFrame(calib_data["grid_points"], columns=['X', 'Y', 'Z']))
             else:
                 st.text("Not available or invalid format.")
@@ -440,9 +623,9 @@ def main():
                 else:
                     st.warning(
                         f"Image points for view {selected_image_index + 1} have unexpected shape: {image_points_for_view.shape}")
-            elif selected_image_index is None:
+            elif selected_image_index is None and calib_data:
                 st.text("No image selected to display detected points.")
-            else:
+            elif calib_data:
                 st.text("Not available or invalid format for this view.")
 
 
