@@ -26,6 +26,8 @@ class VirtualCameraSimulator:
             # Consider defining a basic print logger early or skip logging for this specific error.
             print("INFO: Could not set root window to 'zoomed' state (platform dependent).")
 
+        self.save_image_upscale_factor = 10
+
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
 
@@ -395,39 +397,190 @@ class VirtualCameraSimulator:
     def _update_offset(self):
         self.update_simulation()
 
-    # Inside VirtualCameraSimulator class:
     def _save_2d_projection_as_image(self):
-        if self.pil_image is None:
-            self.log_debug("No 2D image available to save.")
-            # Optionally show a tk.messagebox.showinfo or .showerror
-            tk.messagebox.showwarning("Save Error", "No 2D projection image is available to save.")
-            return
+        self.log_debug("Save 2D Projection with anti-aliasing requested...")
 
         suggested_filename = self._generate_descriptive_filename()
-
         filepath = filedialog.asksaveasfilename(
-            initialfile=suggested_filename,
-            defaultextension=".png",
-            filetypes=[
-                ("PNG files", "*.png"),
-                ("JPEG files", "*.jpg;*.jpeg"),
-                ("Bitmap files", "*.bmp"),
-                ("GIF files", "*.gif"),
-                ("All files", "*.*")
-            ],
-            title="Save 2D Projection As..."
+            initialfile=suggested_filename, defaultextension=".png",
+            filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg;*.jpeg"), ("BMP", "*.bmp"), ("GIF", "*.gif"), ("All", "*.*")],
+            title="Save Anti-aliased 2D Projection As..."
         )
 
-        if filepath:  # If the user didn't cancel
-            try:
-                self.pil_image.save(filepath)
-                self.log_debug(f"2D projection saved to: {filepath}")
-                tk.messagebox.showinfo("Save Successful", f"Image saved to:\n{filepath}")
-            except Exception as e:
-                self.log_debug(f"Error saving 2D projection: {e}")
-                tk.messagebox.showerror("Save Error", f"Could not save image:\n{e}")
-        else:
+        if not filepath:
             self.log_debug("Save 2D projection cancelled by user.")
+            return
+
+        self.log_debug(f"Preparing to save anti-aliased image to: {filepath}")
+
+        # --- 1. Define Upscale Parameters ---
+        upscale_factor = self.save_image_upscale_factor
+        target_canvas_width = self.canvas_width  # Original target width
+        target_canvas_height = self.canvas_height  # Original target height
+
+        hires_width = target_canvas_width * upscale_factor
+        hires_height = target_canvas_height * upscale_factor
+
+        # --- 2. Create High-Resolution Temporary Image and Draw Context ---
+        hires_pil_image = Image.new("RGB", (hires_width, hires_height), "lightgrey")  # Match your background
+        hires_draw_context = ImageDraw.Draw(hires_pil_image)
+        self.log_debug(f"Created temporary hires image: {hires_width}x{hires_height}")
+
+        # --- 3. Get All Current Simulation Parameters Needed for Rendering ---
+        # (These are the same parameters fetched at the start of your update_simulation)
+        cam_p = np.array([self.camera_pos_vars[k].get() for k in ['x', 'y', 'z']])
+        cam_r_deg = np.array([self.camera_rot_vars[k].get() for k in ['rx', 'ry', 'rz']])
+
+        Rrz = create_rotation_matrix_z(math.radians(cam_r_deg[2]))
+        Rry = create_rotation_matrix_y(math.radians(cam_r_deg[1]))
+        Rrx = create_rotation_matrix_x(math.radians(cam_r_deg[0]))
+        R_cam_world = Rrz @ Rry @ Rrx
+
+        cam_fwd_loc_h = np.array([0, 0, -1, 0]);
+        cam_up_loc_h = np.array([0, 1, 0, 0])
+        world_fwd = (R_cam_world @ cam_fwd_loc_h)[:3]
+        world_up = (R_cam_world @ cam_up_loc_h)[:3]
+        if np.linalg.norm(world_fwd) < 1e-6:
+            world_fwd = np.array([0, 0, -1])
+        else:
+            world_fwd /= np.linalg.norm(world_fwd)
+        if np.linalg.norm(world_up) < 1e-6:
+            world_up = np.array([0, 1, 0])
+        else:
+            world_up /= np.linalg.norm(world_up)
+
+        target_dist_mm_save = self.obj0_Zc_mm
+        # Use a consistent way to get target distance for V_view, similar to update_simulation
+        # This might involve using self.obj0_Zc_mm if it's reliably updated.
+        # For simplicity in this standalone function, let's assume a fixed look_at_distance or use a robust way to get current object depth.
+        if self.objects_3d and hasattr(self, 'obj0_Zc_mm') and self.obj0_Zc_mm is not None and self.obj0_Zc_mm > 0:
+            current_obj0_Zc_mm_for_target = self.obj0_Zc_mm  # Use the last calculated if available
+            # Re-calculate obj0_Zc_mm based on current cam_p and object for highest accuracy for focal plane
+            temp_V_view_for_Zc = create_view_matrix(cam_p, cam_p + world_fwd * 50.0, world_up)  # Temp V_view
+            obj0 = self.objects_3d[0];
+            M0 = obj0.get_model_matrix();
+            MV0 = temp_V_view_for_Zc @ M0
+            obj0_orig_cam_h = MV0 @ np.array([0, 0, 0, 1])
+            calculated_obj0_Zc_mm = obj0_orig_cam_h[2] / obj0_orig_cam_h[3] if abs(obj0_orig_cam_h[3]) > 1e-9 else \
+            obj0_orig_cam_h[2]
+            if calculated_obj0_Zc_mm > 0: target_dist_mm_save = calculated_obj0_Zc_mm
+
+        cam_target_w_save = cam_p + world_fwd * target_dist_mm_save
+        V_view_save = create_view_matrix(cam_p, cam_target_w_save, world_up)
+
+        K_intrinsic_save = self.K_intrinsic  # Current K
+
+        target_h_dof_save = np.append(cam_target_w_save, 1.0);
+        focal_pt_cam_h_save = V_view_save @ target_h_dof_save
+        focal_plane_Zc_mm_save = focal_pt_cam_h_save[2] / focal_pt_cam_h_save[3] if abs(
+            focal_pt_cam_h_save[3]) > 1e-9 else focal_pt_cam_h_save[2]
+        current_f_stop_save = self.aperture.get()
+
+        # --- 5. Re-draw Objects onto hires_draw_context (Scaled) ---
+        if self.objects_3d:
+            light_dir_w = np.array([0.6, 0.7, 1.0]);
+            light_dir_w /= np.linalg.norm(light_dir_w);
+            amb = 0.9
+            all_faces_to_draw_hires = []
+
+            for obj_i, obj in enumerate(self.objects_3d):
+                M = obj.get_model_matrix()
+                all_v_loc_h = obj.vertices_local
+                all_v_world_h = (M @ all_v_loc_h.T).T
+                all_v_cam_h = (V_view_save @ all_v_world_h.T).T  # Use V_view_save
+                all_v_world = all_v_world_h[:, :3] / np.maximum(all_v_world_h[:, 3, np.newaxis], 1e-9)
+
+                if not obj.faces: continue
+                for face_j, face_indices in enumerate(obj.faces):
+                    if len(face_indices) < 3: continue
+                    face_v_w = [all_v_world[idx] for idx in face_indices]
+                    face_v_cam_h_cf = [all_v_cam_h[idx] for idx in face_indices]
+
+                    v0w, v1w, v2w = face_v_w[0], face_v_w[1], face_v_w[2]
+                    norm_w = np.cross(v1w - v0w, v2w - v0w)
+                    if np.linalg.norm(norm_w) < 1e-6: continue
+                    norm_w /= np.linalg.norm(norm_w)
+                    center_w = np.mean(np.array(face_v_w), axis=0)
+                    view_to_face_w = center_w - cam_p  # Use cam_p (current camera position for save)
+                    if np.dot(norm_w, view_to_face_w) >= -0.01: continue
+
+                    diff_int = max(0, np.dot(norm_w, light_dir_w));
+                    intensity = amb + (1 - amb) * diff_int
+                    base_rgb = obj.get_face_color_rgb_int(face_j);
+                    s_rgb_lit = tuple(min(255, int(c * intensity)) for c in base_rgb)
+
+                    orig_scr_pts, face_Zc_mm_vals, valid_proj = [], [], True
+                    for vch in face_v_cam_h_cf:
+                        Xc, Yc, Zc, Wc = vch
+                        if abs(Wc) > 1e-9:
+                            Xc /= Wc
+                            Yc /= Wc
+                            Zc /= Wc
+                        else:
+                            valid_proj = False;break
+                        face_Zc_mm_vals.append(Zc)
+                        if Zc <= 0.01: valid_proj = False;break
+                        uvw_p = K_intrinsic_save @ np.array([Xc, Yc, Zc])  # Use K_intrinsic_save
+                        if abs(uvw_p[2]) < 1e-6: valid_proj = False;break
+                        orig_scr_pts.append((uvw_p[0] / uvw_p[2], uvw_p[1] / uvw_p[2]))  # These are 1x scale points
+
+                    if not valid_proj or len(orig_scr_pts) < 3: continue
+                    avg_Zc_mm_face = np.mean(face_Zc_mm_vals)
+                    final_face_rgb = list(s_rgb_lit)
+
+                    # Apply DoF effect
+                    if current_f_stop_save < 22.0:
+                        abs_focal_plane_dist_mm = abs(focal_plane_Zc_mm_save);
+                        abs_face_z_dist_mm = abs(avg_Zc_mm_face)
+                        dof_sharp_factor = max(0.05, min(2.5, current_f_stop_save / 16.0))
+                        sharp_mm = abs_focal_plane_dist_mm * 0.10 * dof_sharp_factor
+                        sharp_mm = max(1.0, min(sharp_mm, abs_focal_plane_dist_mm * 0.75))
+                        diff_mm = abs(abs_face_z_dist_mm - abs_focal_plane_dist_mm)
+                        if diff_mm > sharp_mm:
+                            oof_mm = diff_mm - sharp_mm
+                            trans_dist_mm = (abs_focal_plane_dist_mm * 0.5 + sharp_mm) / max(0.1, dof_sharp_factor)
+                            trans_dist_mm = max(2.0, trans_dist_mm)
+                            eff_str = min(1.0, oof_mm / trans_dist_mm)
+                            dim_val = 1.0 - eff_str * 0.70
+                            final_face_rgb = [min(255, max(0, int(c * dim_val))) for c in s_rgb_lit]
+
+                    fill_hex_final = rgb_tuple_to_hex(tuple(final_face_rgb))
+
+                    # Scale the original screen points for drawing on the hires_pil_image
+                    scaled_scr_pts_for_draw = [
+                        (int(round(u * upscale_factor)), int(round(v * upscale_factor)))
+                        for u, v in orig_scr_pts
+                    ]
+                    all_faces_to_draw_hires.append((avg_Zc_mm_face, scaled_scr_pts_for_draw, fill_hex_final, None))
+
+            all_faces_to_draw_hires.sort(key=lambda x: x[0], reverse=True)
+            for _, scaled_pts, fill, outl in all_faces_to_draw_hires:
+                if len(scaled_pts) >= 3:
+                    hires_draw_context.polygon(scaled_pts, fill=fill, outline=outl, width=1)  # Draw on hires
+
+        # --- 6. Downscale for Anti-aliasing ---
+        if upscale_factor > 1:
+            self.log_debug(
+                f"Downscaling image from {hires_width}x{hires_height} to {target_canvas_width}x{target_canvas_height} for AA.")
+            try:
+                final_image_to_save = hires_pil_image.resize(
+                    (target_canvas_width, target_canvas_height), Image.Resampling.LANCZOS
+                )
+            except AttributeError:  # Fallback for older Pillow versions
+                final_image_to_save = hires_pil_image.resize(
+                    (target_canvas_width, target_canvas_height), Image.ANTIALIAS
+                )
+        else:
+            final_image_to_save = hires_pil_image  # No upscaling was done, save as is
+
+        # --- 7. Save the final image ---
+        try:
+            final_image_to_save.save(filepath)
+            self.log_debug(f"Anti-aliased 2D projection saved to: {filepath}")
+            tk.messagebox.showinfo("Save Successful", f"Anti-aliased image saved to:\n{filepath}")
+        except Exception as e:
+            self.log_debug(f"Error saving anti-aliased 2D projection: {e}")
+            tk.messagebox.showerror("Save Error", f"Could not save image:\n{e}")
 
     def _generate_descriptive_filename(self):
         base = "projection"
@@ -492,7 +645,7 @@ class VirtualCameraSimulator:
         phys_labels = ["Focal Length (mm):", "Pixel Width (µm):", "Pixel Height (µm):"]
         phys_vars = [self.focal_length_mm_var, self.pixel_width_micron_var, self.pixel_height_micron_var]
         phys_defaults = [8.0, 1.6, 1.6]
-        phys_configs = [(1.0, 500.0, 1.0), (0.1, 50.0, 0.01), (0.1, 50.0, 0.01)]
+        phys_configs = [(1.0, 500.0, 1.0), (0.1, 50.0, 0.1), (0.1, 50.0, 0.1)]
 
         # Custom styling to indicate primitive variables
         imp_spinbox_style = ttk.Style()
