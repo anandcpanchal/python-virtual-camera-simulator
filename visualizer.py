@@ -138,7 +138,7 @@ def load_and_parse_calib_yml(yml_file_path):
         with open(yml_file_path, 'r') as f:
             raw_content = f.read()
 
-        processed_content = raw_content.replace('!!opencv-matrix', '!opencv-matrix')
+        processed_content = raw_content.replace('!!opencv-matrix', '!opencv-matrix').replace('YAML:1.0','YAML 1.0')
 
         calib_data = yaml.load(processed_content, Loader=yaml.SafeLoader)
 
@@ -161,7 +161,7 @@ def load_and_parse_calib_yml(yml_file_path):
 
 
 # --- Image Processing Function ---
-def draw_points_on_image(image_cv, points_array, color=(0, 255, 0), radius=5, thickness=-1):
+def draw_points_on_image(image_cv, points_array, color=(0, 255, 0), radius=3, thickness=-1):
     """
     Draws points on an OpenCV image.
     image_cv: OpenCV image (numpy array BGR).
@@ -231,7 +231,7 @@ def plot_camera_pose_3d_plotly(rvec, tvec, K_matrix=None, target_size=0.2):
     cam_z_axis_world = R_cam_in_world[:, 2]  # Viewing direction
 
     # Frustum scaling factor
-    f_scale = 0.5  # Default frustum scale
+    f_scale = 30  # Default frustum scale
     if K_matrix is not None and K_matrix.shape == (3, 3):
         fx = K_matrix[0, 0]
         fy = K_matrix[1, 1]
@@ -273,7 +273,7 @@ def plot_camera_pose_3d_plotly(rvec, tvec, K_matrix=None, target_size=0.2):
                      name='World Z (Zw)'))
 
     # 2. Calibration Target Representation (Cube at World Origin)
-    s = target_size / 2.0
+    s = target_size / 10.0
     cube_corners = np.array([
         [-s, -s, -s], [s, -s, -s], [s, s, -s], [-s, s, -s],
         [-s, -s, s], [s, -s, s], [s, s, s], [-s, s, s]
@@ -289,10 +289,10 @@ def plot_camera_pose_3d_plotly(rvec, tvec, K_matrix=None, target_size=0.2):
     # 3. Camera Center
     fig_data.append(
         go.Scatter3d(x=[cam_center_world[0]], y=[cam_center_world[1]], z=[cam_center_world[2]], mode='markers',
-                     marker=dict(color='black', size=10, symbol='diamond'), name='Cam Center (Xc,Yc,Zc Origin)'))
+                     marker=dict(color='black', size=5, symbol='diamond'), name='Cam Center (Xc,Yc,Zc Origin)'))
 
     # 4. Camera Axes (Xc, Yc, Zc)
-    cam_axis_plot_len = f_scale * 0.7
+    cam_axis_plot_len = f_scale * 30
     fig_data.append(go.Scatter3d(x=[cam_center_world[0], cam_center_world[0] + cam_axis_plot_len * cam_x_axis_world[0]],
                                  y=[cam_center_world[1], cam_center_world[1] + cam_axis_plot_len * cam_x_axis_world[1]],
                                  z=[cam_center_world[2], cam_center_world[2] + cam_axis_plot_len * cam_x_axis_world[2]],
@@ -443,9 +443,9 @@ def main():
                                 selected_image_index < calib_data["image_points"].shape[0]:
                             image_points_for_view = calib_data["image_points"][selected_image_index]
 
-                        image_cv_with_points = draw_points_on_image(image_cv, image_points_for_view, color=(0, 255, 0))
+                        image_cv_with_points = draw_points_on_image(image_cv, image_points_for_view, color=(0, 0, 255))
                         image_display = cv2.cvtColor(image_cv_with_points, cv2.COLOR_BGR2RGB)
-                        caption = f"{current_image_basename} (detected points in green)"
+                        caption = f"{current_image_basename} (detected points in red)"
                         if image_points_for_view is None and "image_points" in calib_data:
                             caption = current_image_basename + " (no valid points to draw for this view)"
                         elif "image_points" not in calib_data:
@@ -594,7 +594,7 @@ def main():
                 st.markdown("##### Camera Pose Visualization")
                 if rvec is not None and tvec is not None:
                     try:
-                        target_cube_size = 0.2
+                        target_cube_size = 0.1
                         if 'grid_points' in calib_data and isinstance(calib_data.get('grid_points'), np.ndarray) and \
                                 calib_data['grid_points'].size > 0:
                             max_coords = np.max(np.abs(calib_data['grid_points']), axis=0)
