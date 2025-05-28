@@ -161,7 +161,7 @@ def load_and_parse_calib_yml(yml_file_path):
 
 
 # --- Image Processing Function ---
-def draw_points_on_image(image_cv, points_array, color=(0, 255, 0), radius=5, thickness=-1):
+def draw_points_on_image(image_cv, points_array, color=(0, 255, 0), radius=3, thickness=-1):
     """
     Draws points on an OpenCV image.
     image_cv: OpenCV image (numpy array BGR).
@@ -428,7 +428,7 @@ def main():
                                 selected_image_index < calib_data["image_points"].shape[0]:
                             image_points_for_view = calib_data["image_points"][selected_image_index]
 
-                        image_cv_with_points = draw_points_on_image(image_cv, image_points_for_view, color=(0, 255, 0))
+                        image_cv_with_points = draw_points_on_image(image_cv, image_points_for_view, color=(0, 0, 255))
                         image_display = cv2.cvtColor(image_cv_with_points, cv2.COLOR_BGR2RGB)
                         caption = f"{current_image_basename} (detected points in green)"
                         if image_points_for_view is None and "image_points" in calib_data:
