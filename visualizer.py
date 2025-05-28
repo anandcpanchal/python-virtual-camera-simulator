@@ -161,7 +161,7 @@ def load_and_parse_calib_yml(yml_file_path):
 
 
 # --- Image Processing Function ---
-def draw_points_on_image(image_cv, points_array, color=(0, 255, 0), radius=3, thickness=-1):
+def draw_points_on_image(image_cv, points_array, color=(0, 255, 0), radius=5, thickness=-1):
     """
     Draws points on an OpenCV image.
     image_cv: OpenCV image (numpy array BGR).
@@ -235,20 +235,13 @@ def plot_camera_pose_3d_plotly(rvec, tvec, K_matrix=None, target_size=0.2):
     if K_matrix is not None and K_matrix.shape == (3, 3):
         fx = K_matrix[0, 0]
         fy = K_matrix[1, 1]
-        # Heuristic scaling based on average focal length, normalized
-        # The division factor (e.g., 2000.0) is arbitrary and might need tuning
-        # depending on the typical scale of your tvec components.
-        # We want f_scale to be a reasonable visual size relative to the scene.
         avg_focal_length = (fx + fy) / 2.0
-        # If tvec components are large (e.g., camera is far), frustum should be larger.
-        # If tvec components are small (camera is close), frustum should be smaller.
-        # Let's try to scale f_scale based on the magnitude of the camera center distance.
         dist_to_origin = np.linalg.norm(cam_center_world)
-        if dist_to_origin > 1e-3:  # Avoid division by zero or very small number
-            f_scale = dist_to_origin * 0.1  # Frustum depth is 10% of distance to origin
+        if dist_to_origin > 1e-3:
+            f_scale = dist_to_origin * 0.1
         else:
-            f_scale = 0.1  # Default small frustum if camera is at origin
-        f_scale = max(0.05, min(f_scale, 1.0))  # Clamp to reasonable visual size
+            f_scale = 0.1
+        f_scale = max(0.05, min(f_scale, 1.0))
 
     frustum_scale_x = 0.5 * f_scale
     frustum_scale_y = 0.4 * f_scale
@@ -266,7 +259,7 @@ def plot_camera_pose_3d_plotly(rvec, tvec, K_matrix=None, target_size=0.2):
     frustum_pts_world = (R_cam_in_world @ frustum_pts_cam.T).T + cam_center_world
 
     fig_data = []
-    axis_len_world = max(0.5, target_size * 20)  # Make world axes visible relative to target
+    axis_len_world = max(0.5, target_size * 2)
 
     # 1. World Axes (Xw, Yw, Zw at origin)
     fig_data.append(
@@ -280,14 +273,14 @@ def plot_camera_pose_3d_plotly(rvec, tvec, K_matrix=None, target_size=0.2):
                      name='World Z (Zw)'))
 
     # 2. Calibration Target Representation (Cube at World Origin)
-    s = target_size / 5.0
+    s = target_size / 2.0
     cube_corners = np.array([
-        [-s, -s, -s], [s, -s, -s], [s, s, -s], [-s, s, -s],  # bottom face
-        [-s, -s, s], [s, -s, s], [s, s, s], [-s, s, s]  # top face
+        [-s, -s, -s], [s, -s, -s], [s, s, -s], [-s, s, -s],
+        [-s, -s, s], [s, -s, s], [s, s, s], [-s, s, s]
     ])
     fig_data.append(go.Mesh3d(
         x=cube_corners[:, 0], y=cube_corners[:, 1], z=cube_corners[:, 2],
-        i=[0, 0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 4, 4, 5, 6, 7],  # Indices for faces
+        i=[0, 0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 4, 4, 5, 6, 7],
         j=[1, 3, 4, 2, 2, 5, 6, 3, 6, 7, 4, 5, 7, 6, 7, 0],
         k=[2, 7, 5, 6, 5, 2, 4, 7, 3, 5, 0, 6, 0, 1, 2, 3],
         opacity=0.6, color='dodgerblue', name='Target', showlegend=True
@@ -296,10 +289,10 @@ def plot_camera_pose_3d_plotly(rvec, tvec, K_matrix=None, target_size=0.2):
     # 3. Camera Center
     fig_data.append(
         go.Scatter3d(x=[cam_center_world[0]], y=[cam_center_world[1]], z=[cam_center_world[2]], mode='markers',
-                     marker=dict(color='black', size=1, symbol='diamond'), name='Cam Center (Xc,Yc,Zc Origin)'))
+                     marker=dict(color='black', size=10, symbol='diamond'), name='Cam Center (Xc,Yc,Zc Origin)'))
 
     # 4. Camera Axes (Xc, Yc, Zc)
-    cam_axis_plot_len = f_scale * 100  # Length of plotted camera axes
+    cam_axis_plot_len = f_scale * 0.7
     fig_data.append(go.Scatter3d(x=[cam_center_world[0], cam_center_world[0] + cam_axis_plot_len * cam_x_axis_world[0]],
                                  y=[cam_center_world[1], cam_center_world[1] + cam_axis_plot_len * cam_x_axis_world[1]],
                                  z=[cam_center_world[2], cam_center_world[2] + cam_axis_plot_len * cam_x_axis_world[2]],
@@ -313,9 +306,7 @@ def plot_camera_pose_3d_plotly(rvec, tvec, K_matrix=None, target_size=0.2):
                                  z=[cam_center_world[2], cam_center_world[2] + cam_axis_plot_len * cam_z_axis_world[2]],
                                  mode='lines', line=dict(color='blue', width=5), name='Cam Z (Zc - View)'))
 
-    # 5. Camera Frustum (lines from camera center to target corners for simplicity, or actual frustum)
-    # For simplicity, let's draw lines from camera center to target cube corners
-    # This is more like "lines of sight" to the target corners than a true FOV frustum.
+    # 5. Lines of sight from camera to target corners
     for corner_idx in range(cube_corners.shape[0]):
         fig_data.append(go.Scatter3d(
             x=[cam_center_world[0], cube_corners[corner_idx, 0]],
@@ -326,18 +317,17 @@ def plot_camera_pose_3d_plotly(rvec, tvec, K_matrix=None, target_size=0.2):
 
     fig = go.Figure(data=fig_data)
 
-    # Set plot layout - make sure all elements are visible
     all_plot_pts = np.vstack([
         np.array([[0, 0, 0], [axis_len_world, 0, 0], [0, axis_len_world, 0], [0, 0, axis_len_world]]),
         cam_center_world.reshape(1, 3),
-        frustum_pts_world,  # Using the actual frustum points for bounds
+        frustum_pts_world,
         cube_corners
     ])
 
     min_vals = np.min(all_plot_pts, axis=0)
     max_vals = np.max(all_plot_pts, axis=0)
     scene_center = (min_vals + max_vals) / 2.0
-    scene_range = np.max(max_vals - min_vals) * 0.6  # Add some padding
+    scene_range = np.max(max_vals - min_vals) * 0.6
 
     fig.update_layout(
         title='Interactive Camera and Target Pose',
@@ -345,7 +335,7 @@ def plot_camera_pose_3d_plotly(rvec, tvec, K_matrix=None, target_size=0.2):
             xaxis=dict(title='World X (mm)', range=[scene_center[0] - scene_range, scene_center[0] + scene_range]),
             yaxis=dict(title='World Y (mm)', range=[scene_center[1] - scene_range, scene_center[1] + scene_range]),
             zaxis=dict(title='World Z (mm)', range=[scene_center[2] - scene_range, scene_center[2] + scene_range]),
-            aspectmode='cube',  # Enforce cubic aspect ratio
+            aspectmode='cube',
             camera_eye=dict(x=1.25, y=1.25, z=1.25)
         ),
         margin=dict(l=10, r=10, b=10, t=50),
@@ -367,6 +357,7 @@ def main():
     selected_image_index = None  # Initialize
     image_paths = []
     calib_data = None
+    image_basenames = []  # Initialize here
 
     if folder_path and os.path.isdir(folder_path):
         input_xml_path = os.path.join(folder_path, "input.xml")
@@ -397,6 +388,31 @@ def main():
                 range(len(image_basenames)),
                 format_func=lambda x: f"{x}: {image_basenames[x]}"
             )
+
+        # --- 1.3 Per-View Reprojection Errors Table (Collapsible) ---
+        if calib_data and "per_view_reprojection_errors" in calib_data and \
+                isinstance(calib_data.get("per_view_reprojection_errors"), np.ndarray):
+            with st.expander("1.3 Per-View Reprojection Errors (All Views)", expanded=False):
+                errors_data = calib_data["per_view_reprojection_errors"]
+                if errors_data.ndim == 2 and errors_data.shape[1] == 1:  # Expected (N, 1)
+                    df_errors = pd.DataFrame(errors_data, columns=["Reprojection Error (pixels)"])
+                    if image_basenames and len(image_basenames) == len(df_errors):
+                        df_errors.insert(0, "Image Name", image_basenames)
+                    elif image_paths and len(image_paths) == len(df_errors):  # Fallback if basenames not populated yet
+                        df_errors.insert(0, "Image Path", image_paths)
+                    else:
+                        df_errors.insert(0, "View Index", range(len(df_errors)))
+
+                    st.dataframe(df_errors.style.format({"Reprojection Error (pixels)": "{:.4f}"}))
+                else:
+                    st.warning(
+                        f"Per-view reprojection errors have unexpected shape: {errors_data.shape}. Expected (N,1).")
+                    st.text(errors_data)  # Show raw data if not parsable into table
+        elif calib_data:
+            with st.expander("1.3 Per-View Reprojection Errors (All Views)", expanded=False):
+                st.info("Per-view reprojection error data not found or in unexpected format in calib_camera.yml.")
+
+
     elif folder_path:  # Input is given but not a valid directory
         st.error("The entered path is not a valid directory. Please check the path and try again.")
         return  # Stop further execution if path is invalid
@@ -407,7 +423,6 @@ def main():
     st.markdown("---")
 
     # --- 2. Image with Markings (Full Width) ---
-    # Make this section collapsible
     image_expander_label = "2. Image View and Statistics"
     if selected_image_index is not None and image_paths:
         current_image_basename = os.path.basename(image_paths[selected_image_index])
@@ -428,7 +443,7 @@ def main():
                                 selected_image_index < calib_data["image_points"].shape[0]:
                             image_points_for_view = calib_data["image_points"][selected_image_index]
 
-                        image_cv_with_points = draw_points_on_image(image_cv, image_points_for_view, color=(0, 0, 255))
+                        image_cv_with_points = draw_points_on_image(image_cv, image_points_for_view, color=(0, 255, 0))
                         image_display = cv2.cvtColor(image_cv_with_points, cv2.COLOR_BGR2RGB)
                         caption = f"{current_image_basename} (detected points in green)"
                         if image_points_for_view is None and "image_points" in calib_data:
@@ -579,15 +594,12 @@ def main():
                 st.markdown("##### Camera Pose Visualization")
                 if rvec is not None and tvec is not None:
                     try:
-                        # Use a default target size, can be made configurable later
                         target_cube_size = 0.2
                         if 'grid_points' in calib_data and isinstance(calib_data.get('grid_points'), np.ndarray) and \
                                 calib_data['grid_points'].size > 0:
-                            # Estimate target size from grid points if available
-                            # This is a rough estimation, assuming grid points are somewhat centered around origin
                             max_coords = np.max(np.abs(calib_data['grid_points']), axis=0)
-                            target_cube_size = np.max(max_coords) * 0.1  # Scale down for visualization
-                            target_cube_size = max(0.05, target_cube_size)  # Ensure a minimum size
+                            target_cube_size = np.max(max_coords) * 0.1
+                            target_cube_size = max(0.05, target_cube_size)
 
                         pose_fig = plot_camera_pose_3d_plotly(rvec, tvec, K_intrinsic_matrix,
                                                               target_size=target_cube_size)
