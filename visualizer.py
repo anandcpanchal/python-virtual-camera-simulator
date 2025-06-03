@@ -161,7 +161,7 @@ def load_and_parse_calib_yml(yml_file_path):
 
 
 # --- Image Processing Function ---
-def draw_points_on_image(image_cv, points_array, color=(0, 255, 0), radius=3, thickness=-1):
+def draw_points_on_image(image_cv, points_array, color=(0, 255, 0), radius=3, thickness=1):
     """
     Draws points on an OpenCV image.
     image_cv: OpenCV image (numpy array BGR).
@@ -577,14 +577,14 @@ def main():
                     st.markdown("###### Rotation Matrix (R_mat - Matrix form)")
                     st.dataframe(pd.DataFrame(R_mat))
 
-                    yaw, pitch, roll = get_euler_angles(rvec)
+                    roll, yaw, pitch = get_euler_angles(rvec)
                     st.markdown("###### Euler Angles (degrees)")
 
                     euler_col1, euler_col2, euler_col3 = st.columns(3)
                     if yaw is not None and pitch is not None and roll is not None:
-                        euler_col1.text(f"Roll (X): {roll + 180:.2f}°")
-                        euler_col2.text(f"Pitch (Y): {pitch:.2f}°")
-                        euler_col3.text(f"Yaw (Z): {yaw:.2f}°")
+                        euler_col1.text(f"Pitch (X): {pitch + 180:.2f}°")
+                        euler_col2.text(f"Yaw (Y): {yaw:.2f}°")
+                        euler_col3.text(f"Roll (Z): {roll:.2f}°")
                     else:
                         st.text("Euler angles could not be computed.")
                 else:
@@ -617,7 +617,7 @@ def main():
         with col5_1:
             st.markdown("##### 5.1 3D Object Points (Grid Points from YML)")
             if "grid_points" in calib_data and isinstance(calib_data.get("grid_points"), np.ndarray):
-                st.dataframe(pd.DataFrame(calib_data["grid_points"], columns=['X', 'Y', 'Z']))
+                st.dataframe(pd.DataFrame(calib_data["grid_points"], columns=['X', 'Y', 'Z']), height=200)
             else:
                 st.text("Not available or invalid format.")
 
