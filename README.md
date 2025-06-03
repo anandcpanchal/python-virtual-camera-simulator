@@ -83,3 +83,8 @@ Once the installation is complete and the virtual environment is activated, you 
 
 ```bash
 python camera.py
+```
+
+### Samples
+
+Sample .obj files added in the ./sample folder, uncompress and load object in the camera simulator to play around.
