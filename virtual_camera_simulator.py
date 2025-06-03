@@ -13,6 +13,7 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk # Add NavigationToolbar2Tk
 import datetime
 
+ENABLE_DEBUG = True
 
 # --- Main Simulator Class ---
 class VirtualCameraSimulator:
@@ -78,16 +79,16 @@ class VirtualCameraSimulator:
                                 'z': tk.DoubleVar(value=100.0)}
         self.camera_rot_vars = {'rx': tk.DoubleVar(value=180.0), 'ry': tk.DoubleVar(value=0.0),
                                 'rz': tk.DoubleVar(value=0.0)}
-        self.camera_transform_configs = {'x': (-500, 500, 1), 'y': (-500, 500, 1), 'z': (1, 5000, 1),
-                                         'rx': (-360, 360, 1), 'ry': (-360, 360, 1), 'rz': (-360, 360, 1)}
+        self.camera_transform_configs = {'x': (-2000, 2000, 5), 'y': (-2000, 2000, 5), 'z': (0, 5000, 5),
+                                         'rx': (-360, 360, 5), 'ry': (-360, 360, 5), 'rz': (-360, 360, 5)}
         self.object_position_offset = {'z': tk.DoubleVar(value=0.0)}
         self.last_mouse_x, self.last_mouse_y, self.dragging_mode, self.active_object_for_drag = 0, 0, None, None
         self.debug_mode_var = tk.BooleanVar(value=False)
         self.obj_transform_vars = {'tx': tk.DoubleVar(value=0.0), 'ty': tk.DoubleVar(value=0.0), 'tz': tk.DoubleVar(value=0.0),
                                    'rx': tk.DoubleVar(value=0.0), 'ry': tk.DoubleVar(value=0.0), 'rz': tk.DoubleVar(value=0.0),
                                    'sx': tk.DoubleVar(value=1.0), 'sy': tk.DoubleVar(value=1.0), 'sz': tk.DoubleVar(value=1.0)}
-        self.transform_configs = {'tx': (-200, 200, 1), 'ty': (-200, 200, 1), 'tz': (-200, 200, 1),
-                                  'rx': (-180, 180, 5), 'ry': (-360, 360, 5), 'rz': (-180, 180, 5),
+        self.transform_configs = {'tx': (-2000, 2000, 5), 'ty': (-2000, 2000, 5), 'tz': (-2000, 2000, 5),
+                                  'rx': (-360, 360, 5), 'ry': (-360, 360, 5), 'rz': (-360, 360, 5),
                                   'sx': (0.1, 10, 0.1), 'sy': (0.1, 10, 0.1), 'sz': (0.1, 10, 0.1)}
 
         # --- Column Frames (Children of self.app_content_frame) ---
@@ -318,8 +319,8 @@ class VirtualCameraSimulator:
         widget.bind('<Button-5>', lambda e, tc=target_canvas: _scroll_target(e), add='+')
 
     def _create_default_object(self):
-        v = [[-10, -10, -10], [10, -10, -10], [10, 10, -10], [-10, 10, -10], [-10, -10, 10], [10, -10, 10],
-             [10, 10, 10], [-10, 10, 10]]
+        v = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1],
+             [1, 1, 1], [0, 1, 1]]
         e = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)]
         # Define simple faces for the default cube for surface rendering
         f = [(0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]  # CCW from outside
@@ -577,7 +578,7 @@ class VirtualCameraSimulator:
         try:
             final_image_to_save.save(filepath)
             self.log_debug(f"Anti-aliased 2D projection saved to: {filepath}")
-            tk.messagebox.showinfo("Save Successful", f"Anti-aliased image saved to:\n{filepath}")
+            # tk.messagebox.showinfo("Save Successful", f"Anti-aliased image saved to:\n{filepath}")
         except Exception as e:
             self.log_debug(f"Error saving anti-aliased 2D projection: {e}")
             tk.messagebox.showerror("Save Error", f"Could not save image:\n{e}")
@@ -846,11 +847,12 @@ class VirtualCameraSimulator:
         self.log_debug(f"Debug mode: {self.debug_mode_var.get()}")
 
     def log_debug(self, msg):
-        if self.debug_mode_var.get():
-            if isinstance(msg, np.ndarray):
-                print(f"[DBG]\n{np.array2string(msg, precision=3, suppress_small=True, max_line_width=120)}")
-            else:
-                print(f"[DBG] {msg}")
+        if ENABLE_DEBUG:
+            if self.debug_mode_var.get():
+                if isinstance(msg, np.ndarray):
+                    print(f"[DBG]\n{np.array2string(msg, precision=3, suppress_small=True, max_line_width=120)}")
+                else:
+                    print(f"[DBG] {msg}")
 
     def _on_mouse_press(self, event):
         if self.measuring_2d_mode and event.num == 1:
@@ -1234,7 +1236,7 @@ class VirtualCameraSimulator:
 
         # --- Draw Pixel Grid if Enabled ---
         if self.show_2d_grid_var.get():
-            grid_color = "#D0D0D0"
+            grid_color = "#A0A0A0"
             try:
                 current_grid_spacing = self.grid_spacing_px_var.get()  # Corrected variable name
                 if current_grid_spacing < 2:  # Ensure a minimum practical spacing
